@@ -106,10 +106,10 @@ describe("service registry emitter", () => {
     ok(providerModule.includes("from azure.core.paging import ItemPaged"));
 
     ok(providerModule.includes("def createWidget(self"));
-    ok(providerModule.includes("-> LROPoller[Any]"));
+    ok(/-> LROPoller\[[^\]]+\]/.test(providerModule));
     ok(providerModule.includes("_create_lro_poller"));
 
     ok(providerModule.includes("def listWidgets(self"));
-    ok(providerModule.includes("-> ItemPaged[Any]"));
+    ok(/-> ItemPaged\[[^\]]+\]/.test(providerModule));
   });
 });

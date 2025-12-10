@@ -1,5 +1,12 @@
-import { EmitContext, emitFile, getNamespaceFullName, resolvePath } from "@typespec/compiler";
-import type { Program } from "@typespec/compiler";
+import {
+  EmitContext,
+  emitFile,
+  getNamespaceFullName,
+  isArrayModelType,
+  isRecordModelType,
+  resolvePath,
+} from "@typespec/compiler";
+import type { Model, ModelProperty, Program, Scalar, Type } from "@typespec/compiler";
 import { getAllHttpServices, HttpOperation, HttpService } from "@typespec/http";
 import { getExtensions } from "@typespec/openapi";
 import { getVersions } from "@typespec/versioning";
@@ -19,6 +26,8 @@ interface OperationShape {
   group: string;
   isLro: boolean;
   isPageable: boolean;
+  returnType: string;
+  pageItemType?: string;
 }
 
 interface ProviderModel {
@@ -76,6 +85,8 @@ function buildProviderModel(program: Program, service: HttpService, options: Mgm
     group: getOperationGroup(op),
     isLro: isLongRunning(program, op),
     isPageable: isPageable(program, op),
+    returnType: typeToPython(op.operation.returnType, program),
+    pageItemType: getPageItemType(op.operation.returnType, program),
   }));
 
   return { providerName, moduleName, className, apiVersion, operations };
@@ -439,7 +450,9 @@ function renderRouteEntry(op: OperationShape): string {
 function renderProtocolMethod(op: OperationShape): string {
   const params = op.pathParams.map((p) => `${p}: Any`).join(", ");
   const signature = params ? `${params}, **kwargs: Any` : "**kwargs: Any";
-  const returnType = op.isLro ? "LROPoller[Any]" : op.isPageable ? "ItemPaged[Any]" : "Any";
+  const baseReturn = op.returnType || "Any";
+  const pagedItem = op.pageItemType || baseReturn || "Any";
+  const returnType = op.isLro ? `LROPoller[${baseReturn}]` : op.isPageable ? `ItemPaged[${pagedItem}]` : baseReturn;
   return `  def ${op.name}(self, ${signature}) -> ${returnType}: ...`;
 }
 
@@ -469,6 +482,81 @@ def get_factory(provider: str, client, subscription_id: str | None = None, api_v
         raise ValueError(f"Service provider '{provider}' is not supported.") from exc
     return factory_cls(client, provider, subscription_id, api_version)
 `;
+}
+
+function typeToPython(type: Type | undefined, program?: Program): string {
+  if (!type) {
+    return "Any";
+  }
+
+  switch (type.kind) {
+    case "Scalar":
+      return mapScalarToPython(type as Scalar);
+    case "String":
+      return "str";
+    case "Number":
+      return "float";
+    case "Boolean":
+      return "bool";
+    case "Model": {
+      const model = type as Model;
+      if (program && isArrayModelType(program, model)) {
+        return `list[${typeToPython((model as any).value, program)}]`;
+      }
+      if (program && isRecordModelType(program, model)) {
+        return `Dict[str, ${typeToPython((model as any).value, program)}]`;
+      }
+      return toPascalCase(model.name ?? "Model");
+    }
+    case "Enum":
+      return toPascalCase((type as any).name ?? "Enum");
+    case "Tuple":
+      return "tuple[Any, ...]";
+    case "Union":
+      return "Any";
+    case "Intrinsic":
+      return toPascalCase((type as any).name ?? "Intrinsic");
+    default:
+      return "Any";
+  }
+}
+
+function mapScalarToPython(scalar: Scalar): string {
+  const name = scalar.name?.toLowerCase();
+  if (!name) return "Any";
+
+  if (name.includes("int")) return "int";
+  if (name.includes("float") || name.includes("double") || name.includes("decimal")) return "float";
+  if (name === "boolean" || name === "bool") return "bool";
+  if (name === "string" || name === "uuid" || name === "uri" || name.endsWith("datetime")) return "str";
+  if (name === "bytes" || name === "bytearray") return "bytes";
+  return toPascalCase(scalar.name);
+}
+
+function getPageItemType(returnType: Type | undefined, program?: Program): string | undefined {
+  if (!returnType) return undefined;
+
+  // Direct arrays
+  if (program && returnType.kind === "Model" && isArrayModelType(program, returnType as Model)) {
+    return typeToPython((returnType as any).value, program);
+  }
+
+  if (returnType.kind === "Model") {
+    const model = returnType as Model;
+    const valueProp = getModelProperty(model, "value");
+    if (valueProp) {
+      if (program && valueProp.type?.kind === "Model" && isArrayModelType(program, valueProp.type as Model)) {
+        return typeToPython((valueProp.type as any).value, program);
+      }
+      return typeToPython(valueProp.type, program);
+    }
+  }
+
+  return typeToPython(returnType, program);
+}
+
+function getModelProperty(model: Model, name: string): ModelProperty | undefined {
+  return model.properties?.get(name);
 }
 
 function toSnakeCase(value: string): string {
