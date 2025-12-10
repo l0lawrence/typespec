@@ -5,12 +5,13 @@ import {
   expectDiagnosticEmpty,
 } from "@typespec/compiler/testing";
 import { HttpTestLibrary } from "@typespec/http/testing";
+import { OpenAPITestLibrary } from "@typespec/openapi/testing";
 import { VersioningTestLibrary } from "@typespec/versioning/testing";
 import { HttpMgmtPythonServiceRegistryTestLibrary } from "../src/testing/index.js";
 
 export async function createHttpMgmtPythonServiceRegistryTestHost() {
   return createTestHost({
-    libraries: [HttpMgmtPythonServiceRegistryTestLibrary, HttpTestLibrary, VersioningTestLibrary],
+    libraries: [HttpMgmtPythonServiceRegistryTestLibrary, HttpTestLibrary, VersioningTestLibrary, OpenAPITestLibrary],
   });
 }
 

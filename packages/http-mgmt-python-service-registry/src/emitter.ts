@@ -1,6 +1,7 @@
 import { EmitContext, emitFile, getNamespaceFullName, resolvePath } from "@typespec/compiler";
 import type { Program } from "@typespec/compiler";
 import { getAllHttpServices, HttpOperation, HttpService } from "@typespec/http";
+import { getExtensions } from "@typespec/openapi";
 import { getVersions } from "@typespec/versioning";
 
 interface MgmtEmitterOptions {
@@ -16,6 +17,8 @@ interface OperationShape {
   path: string;
   pathParams: string[];
   group: string;
+  isLro: boolean;
+  isPageable: boolean;
 }
 
 interface ProviderModel {
@@ -71,6 +74,8 @@ function buildProviderModel(program: Program, service: HttpService, options: Mgm
     path: op.path,
     pathParams: extractPathParams(op),
     group: getOperationGroup(op),
+    isLro: isLongRunning(program, op),
+    isPageable: isPageable(program, op),
   }));
 
   return { providerName, moduleName, className, apiVersion, operations };
@@ -125,9 +130,57 @@ function getOperationGroup(op: HttpOperation): string {
   return "default";
 }
 
+function isLongRunning(program: Program, op: HttpOperation): boolean {
+  const extensions = getExtensions(program, op.operation) ?? getExtensions(program, op as any);
+  if (extensions?.get("x-ms-long-running-operation" as const)) {
+    return true;
+  }
+
+  const decorators = (op.operation as any)?.decorators as { decorator?: { name?: string }; args?: { value?: unknown }[] }[] | undefined;
+  if (decorators?.some((d) => d.decorator?.name === "$lro")) {
+    return true;
+  }
+
+  // Fallback: treat operations that return 202/201 as long-running even if the extension is missing.
+  const statusCodes = ((op as any).responses as { statusCodes?: (string | number)[] }[] | undefined)
+    ?.flatMap((r) => r.statusCodes ?? [])
+    .map((c) => String(c));
+  if (statusCodes?.some((c) => c === "202" || c === "201")) {
+    return true;
+  }
+
+  // Heuristic: many management LROs are create/update/delete style operations.
+  return /^(begin|create|update|delete|purge|start|stop)/i.test(op.operation.name);
+}
+
+function isPageable(program: Program, op: HttpOperation): boolean {
+  const extensions = getExtensions(program, op.operation) ?? getExtensions(program, op as any);
+  if (extensions?.get("x-ms-pageable" as const)) {
+    return true;
+  }
+
+  const decorators = (op.operation as any)?.decorators as { decorator?: { name?: string }; args?: { value?: unknown }[] }[] | undefined;
+  if (decorators?.some((d) => d.decorator?.name === "$pageable")) {
+    return true;
+  }
+
+  // Heuristic: list operations with skip tokens are pageable even if the extension is missing.
+  const rawParams = (op as any).parameters;
+  const params = Array.isArray(rawParams) ? rawParams : rawParams ? Object.values(rawParams) : [];
+  const hasSkipToken = (params as { type?: { name?: string }; param?: { name?: string }; name?: string }[]).some(
+    (p) => p?.type?.name === "skipToken" || (p as any)?.param?.name === "skipToken" || p?.name === "skipToken",
+  );
+  if (hasSkipToken) {
+    return true;
+  }
+
+  return /^list/i.test(op.operation.name);
+}
+
 function renderServiceFactory(): string {
   return `from typing import Any, Dict, Optional
 
+from azure.core.paging import ItemPaged
 from azure.core.polling import LROPoller, NoPolling, PollingMethod
 from azure.core.rest import HttpRequest, HttpResponse
 from azure.core.pipeline import PipelineResponse, PipelineContext
@@ -197,6 +250,33 @@ class ServiceProviderFactory:
         url = self._with_api_version(self._format_url(path, path_params), api_version)
         request = HttpRequest("OPTIONS", url)
         return self._send(request, **kwargs)
+
+    def _create_item_paged(self, first_page: Callable[..., HttpResponse], *args: Any, **kwargs: Any) -> ItemPaged[Any]:
+      def extract_data(response: HttpResponse) -> tuple[list[Any], str | None]:
+        data = response.json() if hasattr(response, "json") else None
+        if isinstance(data, dict):
+          items = data.get("value") or data.get("items") or []
+          if isinstance(items, dict):
+            items = list(items.values())
+          next_link = data.get("nextLink") or data.get("next_page_link") or data.get("next_page") or data.get("nextLinkName")
+        elif isinstance(data, list):
+          items = data
+          next_link = None
+        else:
+          items = [] if data is None else [data]
+          next_link = None
+        return list(items), next_link
+
+      def get_next(continuation_token: str | None = None):
+        if continuation_token:
+          resp = self.get(continuation_token, path_params=None, api_version=None, **kwargs)
+        else:
+          resp = first_page(*args, **kwargs)
+
+        items, next_link = extract_data(resp)
+        return items, next_link
+
+      return ItemPaged(get_next)
 
     def _create_lro_poller(self, response: HttpResponse, **kwargs: Any) -> LROPoller[Any]:
         polling: PollingMethod | bool | None = kwargs.pop("polling", True)
@@ -274,9 +354,24 @@ function renderProviderModule(model: ProviderModel): string {
     .map(([groupKey, info]) => `  @property\n  def ${groupKey}(self) -> ${info.protoName}:\n    return cast(${info.protoName}, self)`)
     .join("\n\n");
 
-  return `from typing import Any, Callable, Dict, Protocol, TypedDict, cast
+  const needsLro = model.operations.some((op) => op.isLro);
+  const needsPaging = model.operations.some((op) => op.isPageable);
 
-from .service_factory import ServiceProviderFactory
+  const typingImports = ["Any", "Callable", "Dict", "Protocol", "TypedDict", "cast"];
+  if (needsPaging) typingImports.push("Iterable");
+  const typingImportLine = typingImports.join(", ");
+
+  const extraImports = ["from .service_factory import ServiceProviderFactory"];
+  if (needsLro) {
+    extraImports.unshift("from azure.core.polling import LROPoller");
+  }
+  if (needsPaging) {
+    extraImports.unshift("from azure.core.paging import ItemPaged");
+  }
+
+  return `from typing import ${typingImportLine}
+
+${extraImports.join("\n")}
 
 
 ${protocolDefinitions}
@@ -331,13 +426,21 @@ function renderRouteEntry(op: OperationShape): string {
     ? `{${op.pathParams.map((p) => `'${p}': ${p}`).join(", ")}}`
     : "None";
 
-  return `"${op.name}": (lambda ${paramsSignature}**kwargs: self.${op.verb.toLowerCase()}("${op.path}", path_params=${pathDict}, **kwargs))`;
+  const callExpr = `self.${op.verb.toLowerCase()}("${op.path}", path_params=${pathDict}, **kwargs)`;
+  if (op.isLro) {
+    return `"${op.name}": (lambda ${paramsSignature}**kwargs: self._create_lro_poller(${callExpr}))`;
+  }
+  if (op.isPageable) {
+    return `"${op.name}": (lambda ${paramsSignature}**kwargs: self._create_item_paged(lambda **_kwargs: ${callExpr}, **kwargs))`;
+  }
+  return `"${op.name}": (lambda ${paramsSignature}**kwargs: ${callExpr})`;
 }
 
 function renderProtocolMethod(op: OperationShape): string {
   const params = op.pathParams.map((p) => `${p}: Any`).join(", ");
   const signature = params ? `${params}, **kwargs: Any` : "**kwargs: Any";
-  return `  def ${op.name}(self, ${signature}) -> Any: ...`;
+  const returnType = op.isLro ? "LROPoller[Any]" : op.isPageable ? "ItemPaged[Any]" : "Any";
+  return `  def ${op.name}(self, ${signature}) -> ${returnType}: ...`;
 }
 
 function renderOperationHandlerName(op: OperationShape): string {

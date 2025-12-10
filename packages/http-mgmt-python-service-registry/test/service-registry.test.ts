@@ -78,4 +78,38 @@ describe("service registry emitter", () => {
     ok(providerModule.includes("\"alphaList\": (lambda"));
     ok(providerModule.includes("\"betaGet\": (lambda"));
   });
+
+  it("marks lro and pageable operations", async () => {
+    const code = `
+      import "@typespec/http";
+      import "@typespec/openapi";
+      using TypeSpec.Http;
+      using TypeSpec.OpenAPI;
+
+      @service(#{ title: "Flags" })
+      @route("/providers/Microsoft.Flags")
+      namespace Flags {
+        @post @route("/widgets")
+        @TypeSpec.OpenAPI.extension("x-ms-long-running-operation", true)
+        op createWidget(): void;
+
+        @get @route("/widgets")
+        @TypeSpec.OpenAPI.extension("x-ms-pageable", #{ itemName: "value", nextLinkName: "nextLink" })
+        op listWidgets(): void;
+      }
+    `;
+
+    const results = await emit(code);
+    const providerModule = results["_service_registry/microsoft_flags.py"];
+
+    ok(providerModule.includes("from azure.core.polling import LROPoller"));
+    ok(providerModule.includes("from azure.core.paging import ItemPaged"));
+
+    ok(providerModule.includes("def createWidget(self"));
+    ok(providerModule.includes("-> LROPoller[Any]"));
+    ok(providerModule.includes("_create_lro_poller"));
+
+    ok(providerModule.includes("def listWidgets(self"));
+    ok(providerModule.includes("-> ItemPaged[Any]"));
+  });
 });

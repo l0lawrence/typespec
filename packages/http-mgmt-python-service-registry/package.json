@@ -25,6 +25,8 @@
     "eslint": "^9.15.0",
     "@typespec/compiler": "latest",
     "@typespec/http": "latest",
+    "@typespec/openapi": "latest",
+    "@typespec/openapi3": "latest",
     "@typespec/versioning": "latest",
     "typescript": "^5.3.3",
     "prettier": "^3.3.3"
