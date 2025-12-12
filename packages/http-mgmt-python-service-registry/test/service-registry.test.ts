@@ -112,4 +112,76 @@ describe("service registry emitter", () => {
     ok(providerModule.includes("def listWidgets(self"));
     ok(/-> ItemPaged\[[^\]]+\]/.test(providerModule));
   });
+
+  it("honors return type overrides", async () => {
+    const [output, diagnostics] = await emitWithDiagnostics(
+      `
+      import "@typespec/http";
+      import "@typespec/openapi";
+      using TypeSpec.Http;
+
+      @service
+      namespace Demo {
+        model ApiKey {
+          key: string;
+        }
+
+        @post
+        op regenerateKey(): {
+          @body body: ApiKey;
+        };
+      }
+      `,
+      {
+        "return-type-overrides": {
+          regenerateKey: "ApiKey",
+        },
+      }
+    );
+
+    strictEqual(diagnostics.length, 0);
+
+    const file = output["_service_registry/demo.py"] ?? Object.values(output).find((v) => v.includes("class DemoFactory"));
+    ok(file);
+    ok(/def regenerateKey\(self, \*\*kwargs: Any\) -> ApiKey: \.\.\./.test(file));
+  });
+
+  it("emits per-model TypedDicts with properties", async () => {
+    const [output, diagnostics] = await emitWithDiagnostics(
+      `
+      import "@typespec/http";
+      using TypeSpec.Http;
+
+      @service
+      namespace Demo {
+        model Inner {
+          ok: boolean;
+        }
+
+        model RegenerateKeyParameters {
+          id: string;
+          optionalThing?: string;
+          "x-ms-raw": string;
+          inner: Inner;
+        }
+
+        @post
+        op regenerateKey(@body body: RegenerateKeyParameters): void;
+      }
+      `,
+      {}
+    );
+
+    strictEqual(diagnostics.length, 0);
+
+    const modelsFile =
+      output["_service_registry/models/demo.py"] ?? Object.values(output).find((v) => v.includes("TypedDict") && v.includes("RegenerateKeyParameters"));
+    ok(modelsFile);
+
+    ok(modelsFile.includes('class RegenerateKeyParameters(TypedDict'));
+    ok(modelsFile.includes("\"id\": Required[str]"));
+    ok(modelsFile.includes("\"optionalThing\": NotRequired[str]"));
+    ok(modelsFile.includes("\"x-ms-raw\": Required[str]"));
+    ok(modelsFile.includes("\"inner\": Required[Inner]"));
+  });
 });
