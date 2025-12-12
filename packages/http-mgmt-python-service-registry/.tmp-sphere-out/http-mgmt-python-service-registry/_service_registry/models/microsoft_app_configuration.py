@@ -73,9 +73,6 @@ class ArmResponse(TypedDict, total=False):
     "statusCode": Required[float]
     "body": Required[Snapshot]
 
-class Array(TypedDict, total=False):
-    pass
-
 class AzureFrontDoorProperties(TypedDict, total=False):
     "resourceId": NotRequired[ArmResourceIdentifier]
 
@@ -231,12 +228,6 @@ class MetricSpecification(TypedDict, total=False):
 class MoboBrokerResource(TypedDict, total=False):
     "id": NotRequired[ArmResourceIdentifier]
 
-class Model(TypedDict, total=False):
-    pass
-
-class ModelProperty(TypedDict, total=False):
-    pass
-
 class NameAvailabilityStatus(TypedDict, total=False):
     "nameAvailable": NotRequired[bool]
     "message": NotRequired[str]
@@ -271,9 +262,6 @@ class OperationProperties(TypedDict, total=False):
 class Page(TypedDict, total=False):
     "value": Required[list[Any]]
     "nextLink": NotRequired[ResourceLocation]
-
-class ParentKeysOf(TypedDict, total=False):
-    pass
 
 class PollingOptions(TypedDict, total=False):
     "kind": Required[Any]
@@ -327,9 +315,6 @@ class ProxyResource(TypedDict, total=False):
     "type": NotRequired[ArmResourceType]
     "systemData": NotRequired[SystemData]
     "properties": NotRequired[KeyValueProperties]
-
-class Record(TypedDict, total=False):
-    pass
 
 class RegenerateKeyParameters(TypedDict, total=False):
     "id": NotRequired[str]

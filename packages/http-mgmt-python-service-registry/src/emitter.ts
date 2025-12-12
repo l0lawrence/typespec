@@ -643,7 +643,8 @@ function renderProviderModelsFile(program: Program, provider: ProviderModel): st
     if (!model.name) continue;
     const name = toPascalCase(model.name ?? "Model");
     const fields = renderTypedDictFields(program, model);
-    blocks.push(`class ${name}(TypedDict, total=False):\n${fields || "    pass"}`);
+    if (!fields) continue; // skip utility/placeholder models with no properties
+    blocks.push(`class ${name}(TypedDict, total=False):\n${fields}`);
   }
 
   const imports = new Set(["TypedDict", "NotRequired", "Required"]);
