@@ -108,21 +108,28 @@ function buildProviderModel(program: Program, service: HttpService, options: Mgm
   const referencedModelMap = new Map<string, Model>();
 
   const operations: OperationShape[] = service.operations.map((op: HttpOperation) => {
-    const responseType = unwrapArmEnvelope(
-      program,
-      unwrapSingleBodyModel(getSuccessResponseBodyType(program, op) ?? op.operation.returnType),
+    const rawResponseType = unwrapSingleBodyModel(
+      getSuccessResponseBodyType(program, op) ?? op.operation.returnType,
     );
+    const statusOnlyEnvelope = isStatusOnlyArmEnvelope(rawResponseType);
+    const responseType = unwrapArmEnvelope(program, rawResponseType);
     const bodyParam = getBodyParam(program, op);
 
     const override =
       overrides[op.operation.name] ?? overrides[`${op.verb.toUpperCase()} ${op.path}`];
 
-    const returnType = override ? override : typeToPython(responseType, program);
+    const returnType = override
+      ? override
+      : responseType
+        ? typeToPython(responseType, program)
+        : "None";
     const pageItemType = override ? override : getPageItemType(responseType, program);
 
     // Collect referenced TypeSpec models for later TypedDict emission.
     addReferencedModels(program, referencedModelMap, responseType);
-    addReferencedModels(program, referencedModelMap, op.operation.returnType);
+    if (!statusOnlyEnvelope) {
+      addReferencedModels(program, referencedModelMap, op.operation.returnType);
+    }
     addReferencedModels(program, referencedModelMap, op.operation.parameters as any);
     if (bodyParam) {
       const rawParams = (op as any).parameters;
@@ -157,6 +164,23 @@ function buildProviderModel(program: Program, service: HttpService, options: Mgm
   return { providerName, moduleName, className, apiVersion, program, operations, referencedModels };
 }
 
+function isStatusOnlyArmEnvelope(type: Type | undefined): boolean {
+  if (!type || type.kind !== "Model") return false;
+
+  const model = type as Model;
+  const name = model.name ?? "";
+  const isEnvelope = /^(Arm(Response|DeletedResponse|ResourceUpdatedResponse)|ArmResourceCreatedResponse|ArmResourceUpdatedResponse)$/.test(
+    name,
+  );
+  if (!isEnvelope) return false;
+
+  const props = getModelPropertyEntries(model);
+  if (props.length === 0) return true;
+
+  const statusProps = new Set(["statusCode", "azureAsyncOperation", "retryAfter", "location"]);
+  return props.every(([propName]) => statusProps.has(propName));
+}
+
 function unwrapArmEnvelope(program: Program, type: Type | undefined): Type | undefined {
   if (!type || type.kind !== "Model") {
     return type;
@@ -164,7 +188,7 @@ function unwrapArmEnvelope(program: Program, type: Type | undefined): Type | und
 
   // Heuristic: many ARM specs model responses as envelope types (ArmResponse, ArmDeletedResponse, etc.)
   // where the actual resource type is in `properties` or `body`. When we can find a clear candidate,
-  // prefer it for nicer signatures.
+  // prefer it for nicer signatures. If the envelope only carries status/headers, collapse to None.
   const model = type as Model;
   const name = model.name ?? "";
   const isEnvelope = /^(Arm(Response|DeletedResponse|ResourceUpdatedResponse)|ArmResourceCreatedResponse|ArmResourceUpdatedResponse)$/.test(
@@ -174,15 +198,21 @@ function unwrapArmEnvelope(program: Program, type: Type | undefined): Type | und
     return type;
   }
 
-  const props = model.properties;
-  const getProp = (propName: string): ModelProperty | undefined => {
-    if (props instanceof Map) return props.get(propName);
-    return (props as any)?.[propName];
-  };
+  const props = getModelPropertyEntries(model);
+  const getProp = (propName: string): ModelProperty | undefined =>
+    props.find(([name]) => name === propName)?.[1];
 
   // Common candidates in ARM common-types-ish envelopes.
   const candidate = getProp("properties") ?? getProp("body") ?? getProp("resource") ?? getProp("value");
-  return candidate?.type ?? type;
+  if (candidate?.type) {
+    return candidate.type;
+  }
+
+  if (isStatusOnlyArmEnvelope(model)) {
+    return undefined;
+  }
+
+  return type;
 }
 
 function getSuccessResponseBodyType(program: Program, op: HttpOperation): Type | undefined {
