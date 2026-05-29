@@ -151,3 +151,82 @@ $samples | Group-Object renderer | ForEach-Object {
   "$($_.Name) : median=$($vals[[math]::Floor($vals.Count/2)]) ms"
 }
 ```
+
+## vs `@typespec/http-client-python` (the production Azure Python emitter)
+
+To put the sandbox numbers in perspective, we ran the same widget spec through
+the real `@typespec/http-client-python` emitter — the one Azure SDKs ship from.
+It's a fundamentally different beast (TS code-model → YAML → Python
+[`pygen`](../http-client-python/generator/pygen) subprocess → `black` → `pylint`),
+so the comparison is more "two emitters, different design points" than
+"four flavors of the same idea". The headline:
+
+| emitter                                              | widget median |       range |   files |   .py |  bytes | vs `string` |
+| ---------------------------------------------------- | ------------: | ----------: | ------: | ----: | -----: | ----------: |
+| `hello-python-emitter` — `string`                    |        ~21 ms |  19 – 22 ms |   12    |  11   |  21 KB |        1.0× |
+| `hello-python-emitter` — `template`                  |        ~21 ms |  20 – 24 ms |   12    |  11   |  21 KB |        1.0× |
+| `hello-python-emitter` — `ef-mix`                    |        ~31 ms |  29 – 33 ms |   12    |  11   |  21 KB |        1.5× |
+| `hello-python-emitter` — `alloy`                     |        ~55 ms |  53 – 69 ms |   12    |  11   |  21 KB |        2.6× |
+| **`@typespec/http-client-python` — `flavor=azure`**  |    **~5.0 s** | 4.7 – 5.5 s | **31**  | **22**| **245 KB** | **~240×** |
+
+Run with:
+
+```powershell
+node ../compiler/cmd/tsp.js compile test/widget-analytics `
+  --emit C:/path/to/typespec/packages/http-client-python `
+  --output-dir test/tsp-output-widget-real `
+  --option "@typespec/http-client-python.flavor=azure"
+```
+
+(`http-client-python` is excluded from the monorepo's pnpm workspace, so it has
+to be referenced by absolute path; `flavor=azure` is required because the spec
+uses LROs and `pygen` rejects those for the `unbranded` flavor.)
+
+### What you're actually comparing
+
+`@typespec/http-client-python` does **a lot** more per call than this sandbox.
+Apples-to-apples it isn't, but it tells you what the "production-shaped"
+ceiling looks like:
+
+| dimension                       | `hello-python-emitter`                                      | `@typespec/http-client-python`                                              |
+| ------------------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Output package                  | 11 `.py` files in a flat client/operations/models layout    | 22 `.py` files: sync **and** `aio/` async variants, `_utils/model_base.py`, `_utils/serialization.py`, `_patch.py` hooks, `_version.py`, `_configuration.py` |
+| Packaging                       | None                                                         | `pyproject.toml`, `MANIFEST.in`, `LICENSE`, `README.md`, `CHANGELOG.md`, `dev_requirements.txt`, `apiview-properties.json`, `_metadata.json` |
+| Architecture                    | Pure TypeScript end-to-end                                  | TS emitter → YAML code-model → `execSync("python … pygen")` subprocess → `black` autoformat → `pylint` check |
+| Code generator backend          | `python-builders` snippet library (~640 LOC)                | `pygen` (Jinja2 templates, ~thousands of LOC of Python codegen logic)       |
+| Format / lint pass              | None (we emit final text directly)                          | `black --line-length=120` + `pylint` over the whole output tree              |
+| TCGC features used              | A handful: clients, methods, params, models, enums          | Multiapi, visibility-aware serialization, model versioning, polymorphism, paging variants, LRO polling strategies, credentials, retry/auth policies, … |
+| Generated lines per call (widget) | ~600 LOC                                                  | ~7 500 LOC                                                                   |
+| Time per call (widget)          | 21 – 55 ms                                                  | ~5 000 ms (incl. ~3 s `pygen` + ~1.5 s `black` + `pylint`)                  |
+
+### Takeaways
+
+- **The pure-TS renderers are 100–240× faster** than the real emitter on the
+  same spec. That's expected — they don't fork a Python interpreter, don't
+  shell out to `black`, don't lint the output, and don't generate 4× as many
+  files.
+- **Most of `http-client-python`'s wall time is the Python subprocess + format
+  + lint passes**, not "TypeScript codegen is slow". A pure-TS rewrite of the
+  same emitter would likely land somewhere between `alloy` (55 ms) and a few
+  hundred milliseconds for the widget spec.
+- **For local dev loops** (single spec, you want to inspect output), the 5 s
+  cost is the dominant cost — invisible if your test suite already pays it,
+  noticeable if you're iterating on the emitter itself.
+- **For batch generation** (e.g. regenerating dozens of azure-sdk packages in
+  CI), the 5 s scales linearly: 100 specs ≈ 8 min of pygen+black+pylint time.
+  That's where moving format/lint out of band, or batching specs into one
+  Python invocation (the `emit-yaml-only` mode does exactly this), pays off.
+- **`hello-python-emitter` is not a replacement** — it doesn't generate `aio/`,
+  doesn't generate packaging, doesn't generate `_patch.py` hooks, doesn't
+  handle multiapi, doesn't validate versioning. It's a sandbox to compare
+  rendering paradigms on a fixed Azure-shaped output. The "240× faster"
+  number means "240× faster at doing 1/10th of the work".
+
+### Why `sample.tsp` / `sample-large.tsp` aren't in this table
+
+`http-client-python` requires the spec to define at least one `@service` /
+client; both `sample.tsp` and `sample-large.tsp` are bare operations without
+one, so the emitter exits in ~7 ms with the
+`@azure-tools/typespec-python/no-sdk-clients` error before doing any real work.
+Our four renderers don't enforce that constraint and emit happily either way,
+so we only have a head-to-head number on the widget spec.
