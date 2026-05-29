@@ -529,6 +529,8 @@ overrides:
   dompurify: ^3.3.3
   yaml@>=2.0.0 <2.8.3: '>=2.8.3'
 
+packageExtensionsChecksum: sha256-R5i+eb1eiggQ+OjyBy2sbXa3xCW99mQI3E2GdjERiHY=
+
 importers:
 
   .:
@@ -1030,6 +1032,9 @@ importers:
       '@alloy-js/python':
         specifier: 'catalog:'
         version: 0.4.0
+      '@azure-tools/typespec-azure-core':
+        specifier: ^0.68.0
+        version: 0.68.0(@typespec/compiler@packages+compiler)(@typespec/http@packages+http)(@typespec/rest@packages+rest)(@typespec/versioning@packages+versioning)
       '@types/node':
         specifier: 'catalog:'
         version: 25.5.2
@@ -1042,6 +1047,12 @@ importers:
       '@typespec/http':
         specifier: workspace:^
         version: link:../http
+      '@typespec/rest':
+        specifier: workspace:^
+        version: link:../rest
+      '@typespec/versioning':
+        specifier: workspace:^
+        version: link:../versioning
       rimraf:
         specifier: 'catalog:'
         version: 6.1.3
@@ -3282,6 +3293,15 @@ packages:
 
   '@azu/style-format@1.0.1':
     resolution: {integrity: sha512-AHcTojlNBdD/3/KxIKlg8sxIWHfOtQszLvOpagLTO+bjC3u7SAszu1lf//u7JJC50aUSH+BVWDD/KvaA6Gfn5g==}
+
+  '@azure-tools/typespec-azure-core@0.68.0':
+    resolution: {integrity: sha512-p0qUkRZav5fdQvGe2gSCvlgsvpM0y9xVhgH2GpXi5ZzpYfNGzxd8oZr8VOCP8mjMVfGQ3AtnowbmrHALEZgz7Q==}
+    engines: {node: '>=22.0.0'}
+    peerDependencies:
+      '@typespec/compiler': ^1.12.0
+      '@typespec/http': ^1.12.0
+      '@typespec/rest': ^0.82.0
+      '@typespec/versioning': ^0.82.0
 
   '@azure/abort-controller@2.1.2':
     resolution: {integrity: sha512-nBrLsEWm4J2u5LpAPjxADTlq3trDgVZZXHNKabeXZtpq3d3AbN/KGO82R87rdDz5/lYB024rtEf10/q0urNgsA==}
@@ -14156,6 +14176,13 @@ snapshots:
   '@azu/style-format@1.0.1':
     dependencies:
       '@azu/format-text': 1.0.2
+
+  '@azure-tools/typespec-azure-core@0.68.0(@typespec/compiler@packages+compiler)(@typespec/http@packages+http)(@typespec/rest@packages+rest)(@typespec/versioning@packages+versioning)':
+    dependencies:
+      '@typespec/compiler': link:packages/compiler
+      '@typespec/http': link:packages/http
+      '@typespec/rest': link:packages/rest
+      '@typespec/versioning': link:packages/versioning
 
   '@azure/abort-controller@2.1.2':
     dependencies:

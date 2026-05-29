@@ -27,7 +27,7 @@ export async function $onEmit(context: EmitContext<HelloPythonEmitterOptions>) {
 
   const choice: RendererId = context.options.renderer ?? "all";
 
-  const shape = extractSdkShape(context.program, "hello_sdk");
+  const shape = extractSdkShape(context.program);
   if (shape.operations.length === 0) {
     reportDiagnostic(context.program, { code: "no-operations", target: NoTarget });
   }

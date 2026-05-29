@@ -190,3 +190,8 @@ overrides:
   diff@>=6.0.0 <8.0.3: ">=8.0.3"
   dompurify: ^3.3.3
   yaml@>=2.0.0 <2.8.3: ">=2.8.3"
+
+packageExtensions:
+  "@azure-tools/typespec-azure-core":
+    peerDependencies:
+      "@typespec/versioning": "^0.82.0"
