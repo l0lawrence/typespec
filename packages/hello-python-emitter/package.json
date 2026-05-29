@@ -1,0 +1,38 @@
+{
+  "name": "@typespec/hello-python-emitter",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Hello-world TypeSpec emitter sandbox. Generates the same Python SDK shape via four different rendering strategies (alloy, string, template, ef-mix).",
+  "main": "dist/src/index.js",
+  "exports": {
+    ".": {
+      "development": "./src/index.ts",
+      "import": "./dist/src/index.js"
+    }
+  },
+  "scripts": {
+    "clean": "rimraf ./dist",
+    "build": "tsc -p .",
+    "watch": "tsc -p . --watch",
+    "test": "vitest run"
+  },
+  "peerDependencies": {
+    "@alloy-js/core": "catalog:",
+    "@alloy-js/python": "catalog:",
+    "@typespec/compiler": "workspace:^",
+    "@typespec/emitter-framework": "workspace:^",
+    "@typespec/http": "workspace:^"
+  },
+  "devDependencies": {
+    "@alloy-js/core": "catalog:",
+    "@alloy-js/python": "catalog:",
+    "@types/node": "catalog:",
+    "@typespec/compiler": "workspace:^",
+    "@typespec/emitter-framework": "workspace:^",
+    "@typespec/http": "workspace:^",
+    "rimraf": "catalog:",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}
