@@ -196,6 +196,17 @@ def is_json_model_type(parameters: ParameterListType) -> bool:
     )
 
 
+# Standard HTTP status codes that map to a dedicated azure-core error type. Even
+# when a customized error model covers these status codes, the generated client
+# still raises the dedicated error type, just with the customized error body.
+_STATUS_CODE_TO_ERROR_TYPE = {
+    401: "ClientAuthenticationError",
+    404: "ResourceNotFoundError",
+    409: "ResourceExistsError",
+    304: "ResourceNotModifiedError",
+}
+
+
 class _BuilderBaseSerializer(Generic[BuilderType]):
     def __init__(self, code_model: CodeModel, async_mode: bool, client_namespace: str) -> None:
         self.code_model = code_model
@@ -1090,16 +1101,10 @@ class _OperationSerializer(_BuilderBaseSerializer[OperationType]):
                             )
                         # add build-in error type
                         # TODO: we should decide whether need to this wrapper for customized error type
-                        status_code_error_map = {
-                            401: "ClientAuthenticationError",
-                            404: "ResourceNotFoundError",
-                            409: "ResourceExistsError",
-                            304: "ResourceNotModifiedError",
-                        }
-                        if status_code in status_code_error_map:
+                        if status_code in _STATUS_CODE_TO_ERROR_TYPE:
                             retval.append(
                                 "        raise {}(response=response{}{})".format(
-                                    status_code_error_map[cast(int, status_code)],
+                                    _STATUS_CODE_TO_ERROR_TYPE[cast(int, status_code)],
                                     error_model,
                                     (", error_format=ARMErrorFormat" if self.code_model.options["azure-arm"] else ""),
                                 )
@@ -1135,6 +1140,19 @@ class _OperationSerializer(_BuilderBaseSerializer[OperationType]):
                                 "        )",
                             ]
                         )
+                    # add build-in error type for standard status codes that fall
+                    # within the customized ranged error so they keep raising their
+                    # dedicated azure-core error type, just with the customized shape.
+                    for std_status_code, error_type in _STATUS_CODE_TO_ERROR_TYPE.items():
+                        if e.status_codes[0][0] <= std_status_code <= e.status_codes[0][1]:
+                            retval.append(f"        if response.status_code == {std_status_code}:")
+                            retval.append(
+                                "            raise {}(response=response{}{})".format(
+                                    error_type,
+                                    error_model,
+                                    (", error_format=ARMErrorFormat" if self.code_model.options["azure-arm"] else ""),
+                                )
+                            )
                     condition = "elif"
         # default error handling
         default_error_deserialization = builder.default_error_deserialization(self.serialize_namespace)
@@ -1165,6 +1183,21 @@ class _OperationSerializer(_BuilderBaseSerializer[OperationType]):
                         f"{indent}    pipeline_response,",
                         f"{indent})",
                     ]
+                )
+            # The customized default error covers every non-success status code,
+            # so the standard status codes still raise their dedicated azure-core
+            # error type, just deserialized into the customized error body. Codes
+            # already covered by a non-default error are raised inline above.
+            for std_status_code, error_type in _STATUS_CODE_TO_ERROR_TYPE.items():
+                if not self._need_specific_error_map(std_status_code, builder):
+                    continue
+                retval.append(f"    if response.status_code == {std_status_code}:")
+                retval.append(
+                    "        raise {}(response=response{}{})".format(
+                        error_type,
+                        error_model,
+                        (", error_format=ARMErrorFormat" if self.code_model.options["azure-arm"] else ""),
+                    )
                 )
         retval.append(
             "    raise HttpResponseError(response=response{}{})".format(
@@ -1253,16 +1286,23 @@ class _OperationSerializer(_BuilderBaseSerializer[OperationType]):
 
     def error_map(self, builder: OperationType) -> list[str]:
         retval = ["error_map: MutableMapping = {"]
-        if builder.non_default_errors and self.code_model.options["models-mode"]:
-            # TODO: we should decide whether to add the build-in error map when there is a customized default error type
-            if self._need_specific_error_map(401, builder):
-                retval.append("    401: ClientAuthenticationError,")
-            if self._need_specific_error_map(404, builder):
-                retval.append("    404: ResourceNotFoundError,")
-            if self._need_specific_error_map(409, builder):
-                retval.append("    409: ResourceExistsError,")
-            if self._need_specific_error_map(304, builder):
-                retval.append("    304: ResourceNotModifiedError,")
+        # A customized default error model covers every non-success status code,
+        # so the standard status codes are raised after deserialization (with the
+        # customized error body) instead of being mapped here.
+        has_default_error_model = bool(
+            builder.default_error_deserialization(self.serialize_namespace)
+            and self.code_model.options["models-mode"]
+        )
+        if (builder.non_default_errors or has_default_error_model) and self.code_model.options["models-mode"]:
+            if not has_default_error_model:
+                if self._need_specific_error_map(401, builder):
+                    retval.append("    401: ClientAuthenticationError,")
+                if self._need_specific_error_map(404, builder):
+                    retval.append("    404: ResourceNotFoundError,")
+                if self._need_specific_error_map(409, builder):
+                    retval.append("    409: ResourceExistsError,")
+                if self._need_specific_error_map(304, builder):
+                    retval.append("    304: ResourceNotModifiedError,")
         else:
             retval.append(
                 "    401: ClientAuthenticationError, 404: ResourceNotFoundError, 409: ResourceExistsError, "
