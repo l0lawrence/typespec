@@ -62,7 +62,9 @@ jobs:
         run: npm run regenerate
 
       - name: Render HTML diff
-        run: npm run regenerate:render-diff -- --output "${{ runner.temp }}/diff-site" --title "Python emitter — generated test diff (PR #${{ github.event.pull_request.number || 'manual' }})"
+        env:
+          DIFF_TITLE: "Python emitter generated test diff (PR #${{ github.event.pull_request.number || 'manual' }})"
+        run: npm run regenerate:render-diff -- --output "${{ runner.temp }}/diff-site" --title "$DIFF_TITLE"
 
       - name: Record PR metadata
         run: echo "${{ github.event.pull_request.number }}" > "${{ runner.temp }}/diff-site/pr.txt"
