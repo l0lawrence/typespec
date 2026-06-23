@@ -676,22 +676,56 @@ export async function preprocess(flavor: string, generatedFolder: string): Promi
 }
 
 /**
- * Resets the `tests/generated/{azure,unbranded}` baseline by sparse-checking-out
- * `eng/tools/azure-sdk-tools/emitter/generated` from the Azure/azure-sdk-for-python repo, then
- * deleting a couple of fully-generated package folders so regeneration has to
- * recreate them from scratch (smoke test of full-emit path).
+ * Subfolders of the baseline that the regeneration smoke-test fixture needs.
+ *
+ * We don't copy the whole generated folder, just these specific subfolders, to
+ * verify correct preservation/deletion of files and folders during
+ * regeneration, and to avoid accidentally including any manually edited code
+ * that might be in the baseline and cause confusion when it doesn't get updated
+ * during regeneration.
+ */
+export const LEGACY_BASELINE_SUBPATHS = [
+  "azure/authentication-api-key",
+  "unbranded/authentication-api-key",
+  "azure/authentication-union",
+  "azure/generation-subdir",
+  "azure/generation-subdir2",
+  "unbranded/generation-subdir",
+  "unbranded/generation-subdir2",
+];
+
+/**
+ * Callback that copies the given baseline `subPaths` (relative to the baseline
+ * root, e.g. `azure/authentication-api-key`) into `testsGeneratedDir`. Lets the
+ * per-repo `regenerate.ts` choose the baseline source (e.g. an `assets.json`
+ * tag) while this shared helper keeps the surrounding orchestration.
+ */
+export type RestoreBaselineSubPaths = (
+  testsGeneratedDir: string,
+  subPaths: string[],
+) => Promise<void>;
+
+/**
+ * Resets the `tests/generated/{azure,unbranded}` baseline fixture, then deletes
+ * a couple of fully-generated package folders so regeneration has to recreate
+ * them from scratch (smoke test of full-emit path).
+ *
+ * The baseline source is supplied via `restoreSubPaths`. When omitted, it falls
+ * back to sparse-checking-out `eng/tools/azure-sdk-tools/emitter/generated` from
+ * the Azure/azure-sdk-for-python `typespec-python-generated-tests` branch (the
+ * legacy behavior).
  *
  * `generatedFolder` is the per-repo `generator/` directory; baseline lands at
  * `<generatedFolder>/../tests/generated`.
  */
-export async function prepareBaselineOfGeneratedCode(generatedFolder: string): Promise<void> {
-  const repoUrl = "https://github.com/Azure/azure-sdk-for-python.git";
-  const branch = "typespec-python-generated-tests";
-  const sourceSubdir = "eng/tools/azure-sdk-tools/emitter/generated";
+export async function prepareBaselineOfGeneratedCode(
+  generatedFolder: string,
+  restoreSubPaths?: RestoreBaselineSubPaths,
+): Promise<void> {
   const testsGeneratedDir = resolve(generatedFolder, "../tests/generated");
 
   console.log(pc.cyan(`\n${"=".repeat(60)}`));
-  console.log(pc.cyan(`Resetting baseline from ${repoUrl} (${branch}/${sourceSubdir})`));
+  console.log(pc.cyan(`Resetting baseline of generated code`));
   console.log(pc.cyan(`${"=".repeat(60)}\n`));
 
   // Wipe tests/generated
@@ -699,6 +733,29 @@ export async function prepareBaselineOfGeneratedCode(generatedFolder: string): P
     console.log(pc.dim(`Removing ${testsGeneratedDir}`));
     rmSync(testsGeneratedDir, { recursive: true, force: true });
   }
+
+  if (restoreSubPaths) {
+    await restoreSubPaths(testsGeneratedDir, LEGACY_BASELINE_SUBPATHS);
+  } else {
+    await restoreLegacyBaselineSubPaths(testsGeneratedDir);
+  }
+
+  // Smoke test the full-emit path: delete a couple of fully-generated package
+  // folders and every README.md so regeneration has to recreate them.
+  await deleteBaselineSmokeTestTargets(testsGeneratedDir);
+}
+
+/**
+ * Legacy baseline source: sparse-checkout the generated folder from the
+ * Azure/azure-sdk-for-python `typespec-python-generated-tests` branch and copy
+ * the smoke-test subfolders into `testsGeneratedDir`.
+ */
+async function restoreLegacyBaselineSubPaths(testsGeneratedDir: string): Promise<void> {
+  const repoUrl = "https://github.com/Azure/azure-sdk-for-python.git";
+  const branch = "typespec-python-generated-tests";
+  const sourceSubdir = "eng/tools/azure-sdk-tools/emitter/generated";
+
+  console.log(pc.dim(`Resetting baseline from ${repoUrl} (${branch}/${sourceSubdir})`));
 
   // Sparse-checkout the baseline folder into a temp directory
   const tempDir = await mkdtemp(join(tmpdir(), "azsdk-baseline-"));
@@ -720,18 +777,8 @@ export async function prepareBaselineOfGeneratedCode(generatedFolder: string): P
     // to verify correct preservation/deletion of files and folders during regeneration,
     // to avoid accidentally including any manually edited code that might be in the repo
     // and cause confusion when it doesn't get updated during regeneration
-    const legacyCodePathNeededForTests = [
-      "azure/authentication-api-key",
-      "unbranded/authentication-api-key",
-      "azure/authentication-union",
-      "azure/generation-subdir",
-      "azure/generation-subdir2",
-      "unbranded/generation-subdir",
-      "unbranded/generation-subdir2",
-    ];
-
     const sourceRoot = join(tempDir, ...sourceSubdir.split("/"));
-    for (const subPath of legacyCodePathNeededForTests) {
+    for (const subPath of LEGACY_BASELINE_SUBPATHS) {
       const segments = subPath.split("/");
       const src = join(sourceRoot, ...segments);
       const dest = join(testsGeneratedDir, ...segments);
@@ -748,9 +795,14 @@ export async function prepareBaselineOfGeneratedCode(generatedFolder: string): P
   } finally {
     rmSync(tempDir, { recursive: true, force: true });
   }
+}
 
-  // Smoke test the full-emit path: delete a couple of fully-generated package
-  // folders and every README.md so regeneration has to recreate them.
+/**
+ * Smoke-tests the full-emit path by deleting a couple of fully-generated package
+ * folders and every README.md under `testsGeneratedDir` so regeneration has to
+ * recreate them from scratch.
+ */
+async function deleteBaselineSmokeTestTargets(testsGeneratedDir: string): Promise<void> {
   const deleteIfExists = (path: string) => {
     if (!existsSync(path)) return;
     console.log(pc.dim(`Deleting ${path}`));

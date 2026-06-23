@@ -29,6 +29,7 @@ import {
   RegenerateFlags,
   runParallel,
 } from "./regenerate-common.js";
+import { readAssetsConfig, restoreBaselineSubPaths } from "./assets.js";
 
 // Parse arguments
 const argv = parseArgs({
@@ -256,7 +257,17 @@ async function main() {
   const startTime = performance.now();
   let success: boolean;
 
-  await prepareBaselineOfGeneratedCode(GENERATED_FOLDER);
+  // Prefer the test-proxy-style assets baseline (assets.json) when one is
+  // configured with a Tag; otherwise fall back to the legacy azure-sdk-for-python
+  // baseline source inside prepareBaselineOfGeneratedCode.
+  const assetsConfig = readAssetsConfig(PLUGIN_DIR);
+  const restoreSubPaths =
+    assetsConfig && assetsConfig.tag
+      ? (testsGeneratedDir: string, subPaths: string[]) =>
+          restoreBaselineSubPaths(assetsConfig, testsGeneratedDir, subPaths)
+      : undefined;
+
+  await prepareBaselineOfGeneratedCode(GENERATED_FOLDER, restoreSubPaths);
 
   if (flavor) {
     success = await regenerateFlavor(flavor, name, debug, jobs);

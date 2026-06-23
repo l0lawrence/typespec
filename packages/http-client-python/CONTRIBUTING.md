@@ -117,6 +117,63 @@ When you open a PR against this package:
 
 Both must pass before your PR can be merged.
 
+### Generated Test Baseline & PR Diff Previews
+
+The generated test output under `tests/generated/{azure,unbranded}` is **not committed**
+to this repo. Instead, the last-accepted regeneration output ("the baseline") lives in an
+external, public **assets repo** (test-proxy style), pinned by a tag in
+[`assets.json`](./assets.json):
+
+```json
+{
+  "AssetsRepo": "l0lawrence/typespec-assets",
+  "AssetsRepoPrefixPath": "python",
+  "TagPrefix": "python/tests",
+  "Tag": "python/tests_<sha>"
+}
+```
+
+In the assets repo the baseline is stored under `<AssetsRepoPrefixPath>/{azure,unbranded}`
+at the commit the `Tag` points to. Restoring it is an **anonymous clone** of the public
+repo, so it needs no token.
+
+When you open a PR that touches `packages/http-client-python/**`, the **Python Regen Diff**
+workflow:
+
+1. regenerates the tests for your PR,
+2. diffs the fresh output against the assets baseline,
+3. renders a side-by-side **HTML diff** and publishes it to GitHub Pages, and
+4. posts (and keeps updated) a **PR comment** linking to the rendered diff.
+
+This replaces reading large generated diffs in GitHub directly. Closing the PR removes
+the published preview automatically.
+
+You can reproduce the diff locally:
+
+```bash
+npm run regenerate            # produce fresh tests/generated output
+npm run regenerate:render-diff  # writes temp/diff-site/index.html
+```
+
+#### Updating the baseline
+
+After an intentional change to generated output, a maintainer publishes a new baseline and
+bumps `assets.json`. This is a **local** step that uses your own git credentials (or a
+`GH_TOKEN` env var) to push to the assets repo — **no CI secret is required**:
+
+```bash
+npm run regenerate              # generate the new output
+npm run regenerate:push-assets  # push a new baseline + tag, bump assets.json's "Tag"
+```
+
+Then commit the `assets.json` change and open a PR.
+
+> **Bootstrapping:** before the first tag exists, run the two commands above from a working
+> branch to seed the assets repo with an initial baseline + tag, commit `assets.json`, and
+> open PRs off that branch to validate the flow. Until a `Tag` is set, regeneration falls
+> back to the legacy `azure-sdk-for-python` baseline and the diff shows the whole output as
+> added.
+
 ### Manual Regeneration Testing
 
 You can manually trigger the [TypeSpec Python Regenerate Tests](https://github.com/Azure/azure-sdk-for-python/actions/workflows/typespec-python-regenerate.yml) workflow in `azure-sdk-for-python` to regenerate tests with either emitter:
