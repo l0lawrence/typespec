@@ -108,6 +108,9 @@ async function main(): Promise<void> {
 
     git(["init"]);
     git(["config", "core.longpaths", "true"]);
+    // Store the baseline with LF regardless of the maintainer's OS, so the diff
+    // isn't swamped by CRLF-vs-LF noise when CI (Linux) regenerates with LF.
+    git(["config", "core.autocrlf", "false"]);
     git(["remote", "add", "origin", repoUrl]);
 
     // Try to base the new commit on the existing branch; if the repo/branch is
@@ -128,6 +131,11 @@ async function main(): Promise<void> {
       await mkdir(dirname(dest), { recursive: true });
       await cp(join(GENERATED_DIR, flavor), dest, { recursive: true });
     }
+
+    // Normalize line endings to LF in the committed blobs (text=auto skips
+    // detected binaries), so a Windows maintainer's CRLF files don't poison the
+    // baseline. Written before `git add` so it applies to the staged files.
+    writeFileSync(join(tempDir, ".gitattributes"), "* text=auto eol=lf\n");
 
     git(["add", "-A"]);
     const status = git(["status", "--porcelain"], { allowFail: true });

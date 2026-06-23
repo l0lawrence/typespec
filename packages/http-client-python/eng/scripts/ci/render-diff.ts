@@ -101,6 +101,11 @@ function git(args: string[], cwd: string, allowFail = false): string {
   }
 }
 
+/** Removes carriage returns so diff2html doesn't render literal `^M` markers. */
+function stripCr(text: string): string {
+  return text.replace(/\r/g, "");
+}
+
 /** Parses `git diff --numstat` output into aggregate counts. */
 function parseNumstat(numstat: string): { files: number; additions: number; deletions: number } {
   let files = 0;
@@ -155,19 +160,25 @@ async function main(): Promise<void> {
     }
 
     // git diff --no-index returns exit code 1 when there are differences.
-    const diffText = git(
-      [
-        "-c",
-        "core.quotepath=false",
-        "diff",
-        "--no-index",
-        "--no-color",
-        "--",
-        "baseline",
-        "current",
-      ],
-      workDir,
-      true,
+    // --ignore-cr-at-eol makes the diff line-ending agnostic: the baseline may
+    // have been pushed from Windows (CRLF) while CI regenerates on Linux (LF),
+    // and without this every line shows as changed (pure line-ending noise).
+    const diffText = stripCr(
+      git(
+        [
+          "-c",
+          "core.quotepath=false",
+          "diff",
+          "--no-index",
+          "--no-color",
+          "--ignore-cr-at-eol",
+          "--",
+          "baseline",
+          "current",
+        ],
+        workDir,
+        true,
+      ),
     );
     const numstat = git(
       [
@@ -176,6 +187,7 @@ async function main(): Promise<void> {
         "diff",
         "--no-index",
         "--numstat",
+        "--ignore-cr-at-eol",
         "--",
         "baseline",
         "current",
