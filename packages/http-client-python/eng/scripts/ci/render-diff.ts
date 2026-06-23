@@ -311,47 +311,117 @@ function writeSite(diffText: string, summary: DiffSummary): void {
   writeFileSync(join(OUTPUT_DIR, "index.html"), renderIndexPage(files, summary, pad));
 }
 
-/** Index page: a searchable, navigable list of all changed files. */
+/** Index page: a folder-grouped, searchable tree of all changed files. */
 function renderIndexPage(files: FileDiff[], summary: DiffSummary, pad: number): string {
-  const rows = files
-    .map((f, i) => {
-      const href = `files/${String(i + 1).padStart(pad, "0")}.html`;
-      const badge =
-        f.status === "added"
-          ? `<span class="st added">added</span>`
-          : f.status === "removed"
-            ? `<span class="st removed">removed</span>`
-            : `<span class="st modified">modified</span>`;
-      return `<tr data-path="${escapeHtml(f.path.toLowerCase())}">
-  <td class="st-cell">${badge}</td>
-  <td class="path-cell"><a href="${href}">${escapeHtml(f.path)}</a></td>
-  <td class="num add">+${f.additions}</td>
-  <td class="num del">-${f.deletions}</td>
-</tr>`;
-    })
-    .join("\n");
+  const root = buildTree(files, pad);
+  const tree = renderTreeChildren(root, 0);
 
   const body = `
 <input id="filter" type="search" placeholder="Filter ${files.length} files…" autocomplete="off" />
-<p class="hint">Click a file to view its side-by-side diff. <a href="diff.txt">Download the full raw diff</a>.</p>
-<table class="file-list">
-  <thead><tr><th></th><th>File</th><th class="num">+</th><th class="num">−</th></tr></thead>
-  <tbody>
-${rows}
-  </tbody>
-</table>
+<div class="treebar">
+  <button type="button" id="expand-all">Expand all</button>
+  <button type="button" id="collapse-all">Collapse all</button>
+  <span class="hint">Grouped by folder · <a href="diff.txt">download the full raw diff</a>.</span>
+</div>
+<div class="tree">
+${tree}
+</div>
 <script>
   const input = document.getElementById('filter');
-  const rows = Array.from(document.querySelectorAll('tbody tr'));
-  input.addEventListener('input', () => {
+  const rows = Array.from(document.querySelectorAll('.file-row'));
+  const groups = Array.from(document.querySelectorAll('details.dir'));
+  function applyFilter() {
     const q = input.value.toLowerCase();
     for (const r of rows) {
-      r.style.display = r.getAttribute('data-path').includes(q) ? '' : 'none';
+      r.style.display = !q || r.getAttribute('data-path').includes(q) ? '' : 'none';
     }
-  });
+    for (const g of groups) {
+      const visible = g.querySelector('.file-row:not([style*="display: none"])');
+      g.style.display = visible ? '' : (q ? 'none' : '');
+      if (q && visible) g.open = true;
+    }
+  }
+  input.addEventListener('input', applyFilter);
+  document.getElementById('expand-all').addEventListener('click', () => groups.forEach((g) => (g.open = true)));
+  document.getElementById('collapse-all').addEventListener('click', () => groups.forEach((g) => (g.open = false)));
 </script>`;
 
   return pageShell(TITLE, headerHtml(summary), body, ".");
+}
+
+interface TreeNode {
+  dirs: Map<string, TreeNode>;
+  files: { name: string; href: string; file: FileDiff }[];
+  additions: number;
+  deletions: number;
+  count: number;
+}
+
+function newTreeNode(): TreeNode {
+  return { dirs: new Map(), files: [], additions: 0, deletions: 0, count: 0 };
+}
+
+/** Builds a directory tree from the (sorted) flat file list. */
+function buildTree(files: FileDiff[], pad: number): TreeNode {
+  const root = newTreeNode();
+  files.forEach((file, i) => {
+    const href = `files/${String(i + 1).padStart(pad, "0")}.html`;
+    const segments = file.path.split("/");
+    const fileName = segments.pop() ?? file.path;
+    let node = root;
+    node.count += 1;
+    node.additions += file.additions;
+    node.deletions += file.deletions;
+    for (const seg of segments) {
+      let child = node.dirs.get(seg);
+      if (!child) {
+        child = newTreeNode();
+        node.dirs.set(seg, child);
+      }
+      child.count += 1;
+      child.additions += file.additions;
+      child.deletions += file.deletions;
+      node = child;
+    }
+    node.files.push({ name: fileName, href, file });
+  });
+  return root;
+}
+
+function renderTreeChildren(node: TreeNode, depth: number): string {
+  const dirNames = [...node.dirs.keys()].sort((a, b) => a.localeCompare(b));
+  const dirHtml = dirNames
+    .map((name) => renderDir(name, node.dirs.get(name)!, depth))
+    .join("\n");
+  const fileHtml = node.files.map((f) => renderFileRow(f.name, f.href, f.file)).join("\n");
+  return dirHtml + (dirHtml && fileHtml ? "\n" : "") + fileHtml;
+}
+
+function renderDir(name: string, node: TreeNode, depth: number): string {
+  // Open the top two levels (flavor + spec) by default; collapse deeper ones.
+  const open = depth < 2 ? " open" : "";
+  return `<details class="dir"${open}>
+  <summary><span class="dirname">${escapeHtml(name)}/</span> <span class="counts"><span class="muted">${node.count} files</span> <span class="add">+${node.additions}</span> <span class="del">-${node.deletions}</span></span></summary>
+  <div class="children">
+${renderTreeChildren(node, depth + 1)}
+  </div>
+</details>`;
+}
+
+function renderFileRow(
+  name: string,
+  href: string,
+  file: FileDiff,
+): string {
+  const badge =
+    file.status === "added"
+      ? `<span class="st added">A</span>`
+      : file.status === "removed"
+        ? `<span class="st removed">D</span>`
+        : `<span class="st modified">M</span>`;
+  return `<div class="file-row" data-path="${escapeHtml(file.path.toLowerCase())}">
+  ${badge}<a href="${href}">${escapeHtml(name)}</a><span class="counts"><span class="add">+${file.additions}</span> <span class="del">-${file.deletions}</span></span>
+</div>`;
 }
 
 /** One page per changed file: rich side-by-side diff with prev/next nav. */
@@ -450,14 +520,23 @@ header code { background: rgba(255,255,255,0.15); padding: 1px 5px; border-radiu
 .content { padding: 12px 16px; }
 .hint { color: #57606a; font-size: 13px; margin: 8px 0 16px; }
 #filter { width: 100%; box-sizing: border-box; padding: 8px 12px; font-size: 14px; border: 1px solid #d0d7de; border-radius: 6px; margin-top: 12px; }
-table.file-list { width: 100%; border-collapse: collapse; font-size: 13px; }
-table.file-list th { text-align: left; color: #57606a; font-weight: 600; border-bottom: 1px solid #d0d7de; padding: 6px 8px; }
-table.file-list td { padding: 5px 8px; border-bottom: 1px solid #eaeef2; }
-table.file-list td.path-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
-table.file-list td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
-table.file-list a { color: #0969da; text-decoration: none; }
-table.file-list a:hover { text-decoration: underline; }
-.st { font-size: 11px; padding: 1px 6px; border-radius: 999px; text-transform: uppercase; letter-spacing: .03em; }
+.treebar { display: flex; align-items: center; gap: 10px; margin: 10px 0 14px; flex-wrap: wrap; }
+.treebar button { font-size: 12px; padding: 4px 10px; border: 1px solid #d0d7de; background: #f6f8fa; border-radius: 6px; cursor: pointer; }
+.treebar button:hover { background: #eaeef2; }
+.treebar .hint { margin: 0; }
+.tree { font-size: 13px; }
+details.dir { margin: 0; }
+details.dir > summary { cursor: pointer; padding: 3px 6px; border-radius: 6px; list-style-position: inside; display: flex; align-items: center; gap: 8px; }
+details.dir > summary:hover { background: #f0f3f6; }
+details.dir > summary .dirname { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 600; }
+details.dir > summary .counts { font-size: 11px; }
+.counts { margin-left: auto; white-space: nowrap; font-variant-numeric: tabular-nums; display: inline-flex; gap: 8px; }
+.children { margin-left: 16px; border-left: 1px solid #eaeef2; padding-left: 8px; }
+.file-row { display: flex; align-items: center; gap: 8px; padding: 2px 6px; }
+.file-row:hover { background: #f6f8fa; }
+.file-row a { color: #0969da; text-decoration: none; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.file-row a:hover { text-decoration: underline; }
+.st { font-size: 10px; font-weight: 700; width: 16px; height: 16px; line-height: 16px; text-align: center; border-radius: 4px; flex: none; }
 .st.added { background: #dafbe1; color: #1a7f37; }
 .st.removed { background: #ffebe9; color: #cf222e; }
 .st.modified { background: #ddf4ff; color: #0969da; }
