@@ -90,7 +90,11 @@ jobs:
             const prNumber = Number(process.env.PR);
             const owner = context.repo.owner;
             const repo = context.repo.repo;
-            const pagesUrl = `https://${owner}.github.io/${repo}/pr/${prNumber}/`;
+            // Append a short-SHA cache-buster: re-runs publish to the same
+            // pr/<num>/ path, and GitHub Pages' CDN serves a stale index.html
+            // without a fresh query string (the file count would look outdated).
+            const headSha = ((context.payload.workflow_run || {}).head_sha || '').slice(0, 7);
+            const pagesUrl = `https://${owner}.github.io/${repo}/pr/${prNumber}/${headSha ? `?v=${headSha}` : ''}`;
 
             let summary = { changed: true, filesChanged: 0, additions: 0, deletions: 0, baselineTag: '', note: undefined };
             try {
