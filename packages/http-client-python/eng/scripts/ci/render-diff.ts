@@ -31,7 +31,7 @@ import { createRequire } from "module";
 import { tmpdir } from "os";
 import { dirname, join, resolve } from "path";
 import pc from "picocolors";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import { parseArgs } from "util";
 
 import { FLAVORS, readAssetsConfig, restoreFullBaseline } from "./assets.js";
@@ -47,6 +47,7 @@ const argv = parseArgs({
     output: { type: "string", short: "o" },
     generated: { type: "string", short: "g" },
     title: { type: "string", short: "t" },
+    open: { type: "boolean" },
     help: { type: "boolean", short: "h" },
   },
 });
@@ -61,6 +62,7 @@ ${pc.bold("Options:")}
   -o, --output <dir>     Output directory (default: temp/diff-site).
   -g, --generated <dir>  Current generated dir (default: tests/generated).
   -t, --title <text>     Title shown on the diff page.
+      --open             Open the rendered diff in your default browser.
   -h, --help             Show this help.
 `);
   process.exit(0);
@@ -268,14 +270,38 @@ async function main(): Promise<void> {
     writeFileSync(join(OUTPUT_DIR, "summary.json"), JSON.stringify(summary, null, 2) + "\n");
     writeSite(diffText, summary);
 
+    const indexPath = join(OUTPUT_DIR, "index.html");
     console.log(
       pc.green(
         `Diff rendered to ${OUTPUT_DIR} ` +
           `(${summary.filesChanged} files, +${summary.additions}/-${summary.deletions}).`,
       ),
     );
+    // Print a clickable file:// URL so the page is one click away locally, and
+    // optionally pop it open in the default browser.
+    console.log(pc.cyan(`View it at ${pathToFileURL(indexPath).href}`));
+    if (argv.values.open) {
+      openInBrowser(indexPath);
+    }
   } finally {
     rmSync(workDir, { recursive: true, force: true });
+  }
+}
+
+/** Opens a local file in the OS default browser; never fails the run. */
+function openInBrowser(target: string): void {
+  try {
+    if (process.platform === "win32") {
+      // `start` is a cmd builtin; the empty first arg is the window title so a
+      // path with spaces isn't mistaken for one.
+      execFileSync("cmd", ["/c", "start", "", target], { stdio: "ignore" });
+    } else if (process.platform === "darwin") {
+      execFileSync("open", [target], { stdio: "ignore" });
+    } else {
+      execFileSync("xdg-open", [target], { stdio: "ignore" });
+    }
+  } catch (err) {
+    console.warn(pc.yellow(`Could not open a browser automatically: ${err}`));
   }
 }
 
