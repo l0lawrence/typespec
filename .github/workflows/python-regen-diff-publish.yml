@@ -108,6 +108,30 @@ jobs:
               : '_Baseline not bootstrapped yet — entire output shown as added._';
             const noteLine = summary.note ? `\n> ⚠️ ${summary.note}\n` : '';
 
+            // When the PR changes generated output, the contributor must refresh
+            // the external baseline and pin the new tag in assets.json (test-proxy
+            // "push" model), so the baseline travels with the PR.
+            const actionBlock = summary.changed
+              ? [
+                  '',
+                  '<details><summary>👇 This PR changes generated output — update the baseline</summary>',
+                  '',
+                  'Review the rendered diff above. If the changes are expected, refresh the',
+                  'baseline and pin the new tag so it ships with this PR:',
+                  '',
+                  '```bash',
+                  'cd packages/http-client-python',
+                  'npm run regenerate            # produce fresh generated output',
+                  'npm run regenerate:push-assets  # publish baseline + bump assets.json',
+                  '```',
+                  '',
+                  'Then commit the updated `packages/http-client-python/assets.json` (its',
+                  '`Tag` now points at the new baseline). Pushing it makes this check pass',
+                  'with **0 differences**.',
+                  '</details>',
+                ].join('\n')
+              : '';
+
             const body = [
               marker,
               '### 🐍 Python emitter — generated test diff',
@@ -116,6 +140,7 @@ jobs:
               '',
               `👉 **[View the rendered HTML diff](${pagesUrl})**`,
               noteLine,
+              actionBlock,
               `<sub>${tagLine} · updated for the latest commit. Re-runs of CI refresh this preview.</sub>`,
             ].join('\n');
 
