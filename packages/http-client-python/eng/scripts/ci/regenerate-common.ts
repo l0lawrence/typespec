@@ -70,11 +70,7 @@ export interface BuildTaskGroupsOptions {
 
 // ---- Public constants ----
 
-export const SKIP_SPECS: string[] = [
-  "type/file",
-  "service/multiple-services",
-  "azure/client-generator-core/response-as-bool",
-];
+export const SKIP_SPECS: string[] = ["type/file"];
 
 export const SpecialFlags: Record<string, Record<string, any>> = {
   azure: {
@@ -777,6 +773,17 @@ async function restoreLegacyBaselineSubPaths(testsGeneratedDir: string): Promise
     // to verify correct preservation/deletion of files and folders during regeneration,
     // to avoid accidentally including any manually edited code that might be in the repo
     // and cause confusion when it doesn't get updated during regeneration
+    const legacyCodePathNeededForTests = [
+      "azure/authentication-api-key",
+      "unbranded/authentication-api-key",
+      "azure/authentication-union",
+      "azure/generation-subdir",
+      "azure/generation-subdir2",
+      "unbranded/generation-subdir",
+      "unbranded/generation-subdir2",
+      "azure/azure-client-generator-core-alternate-type",
+    ];
+
     const sourceRoot = join(tempDir, ...sourceSubdir.split("/"));
     for (const subPath of LEGACY_BASELINE_SUBPATHS) {
       const segments = subPath.split("/");
