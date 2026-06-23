@@ -137,6 +137,23 @@ function normalizeEol(dir: string): void {
   }
 }
 
+/**
+ * Removes transient codegen handoff files (`.tsp-codegen-*.json`) from a tree.
+ * These are written by the TypeSpec emit step for the Python batch step; they
+ * embed absolute machine-local paths and are not real generated output, so they
+ * would otherwise show up as noise in the diff.
+ */
+function pruneIntermediates(dir: string): void {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      pruneIntermediates(full);
+    } else if (entry.isFile() && entry.name.startsWith(".tsp-codegen-")) {
+      rmSync(full, { force: true });
+    }
+  }
+}
+
 /** Parses `git diff --numstat` output into aggregate counts. */
 function parseNumstat(numstat: string): { files: number; additions: number; deletions: number } {
   let files = 0;
@@ -194,6 +211,10 @@ async function main(): Promise<void> {
     // Windows-generated baseline with `\r\r\n`) don't masquerade as real diffs.
     normalizeEol(currentDir);
     normalizeEol(baselineDir);
+
+    // Drop transient codegen handoff files so they never appear in the diff.
+    pruneIntermediates(currentDir);
+    pruneIntermediates(baselineDir);
 
     // git diff --no-index returns exit code 1 when there are differences.
     // --ignore-cr-at-eol makes the diff line-ending agnostic: the baseline may

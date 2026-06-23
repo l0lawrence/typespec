@@ -91,6 +91,25 @@ function normalizeEol(dir: string): void {
   }
 }
 
+/**
+ * Removes transient codegen handoff files (`.tsp-codegen-*.json`) that the
+ * TypeSpec emit step writes for the Python batch step. They embed absolute,
+ * machine-local paths (e.g. a Windows temp dir) and are not real generated
+ * output, so they must never be published into the portable baseline — for
+ * legacy specs whose baseline is restored verbatim, a stale path here breaks
+ * regeneration on other machines.
+ */
+function pruneIntermediates(dir: string): void {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      pruneIntermediates(full);
+    } else if (entry.isFile() && entry.name.startsWith(".tsp-codegen-")) {
+      rmSync(full, { force: true });
+    }
+  }
+}
+
 async function main(): Promise<void> {
   const config = readAssetsConfig(PACKAGE_ROOT);
   if (!config) {
@@ -163,6 +182,10 @@ async function main(): Promise<void> {
     // Belt-and-suspenders: strip stray CR bytes (incl. Windows double-CR
     // `\r\r\n`) that git's eol=lf normalization can leave behind.
     normalizeEol(prefixRoot);
+
+    // Drop transient codegen handoff files; they embed machine-local paths and
+    // must not pollute the portable baseline.
+    pruneIntermediates(prefixRoot);
 
     git(["add", "-A"]);
     const status = git(["status", "--porcelain"], { allowFail: true });
