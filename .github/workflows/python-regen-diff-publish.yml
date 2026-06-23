@@ -48,6 +48,13 @@ jobs:
             exit 0
           fi
           PR="$(tr -d '[:space:]' < diff-site/pr.txt)"
+          # pr.txt is built on the (untrusted) fork PR runner, so treat it as
+          # tainted: a non-numeric value here would otherwise reach shell path
+          # operations (rm -rf / mkdir / cp) below and enable path traversal.
+          if ! printf '%s' "$PR" | grep -Eq '^[0-9]+$'; then
+            echo "::error::PR number from artifact is not a positive integer: '$PR'"
+            exit 1
+          fi
           echo "pr=$PR" >> "$GITHUB_OUTPUT"
 
       - name: Publish to GitHub Pages
@@ -103,19 +110,44 @@ jobs:
               core.warning(`Could not read summary.json: ${e}`);
             }
 
+            // summary.json is produced on the untrusted fork PR runner, so every
+            // field is tainted. Coerce/validate before embedding in the comment to
+            // prevent markdown/link injection into a comment posted with a token
+            // that has issues:write + pull-requests:write.
+            const intOr0 = (v) => (Number.isFinite(Number(v)) ? Math.trunc(Number(v)) : 0);
+            const filesChanged = intOr0(summary.filesChanged);
+            const additions = intOr0(summary.additions);
+            const deletions = intOr0(summary.deletions);
+            const changed = summary.changed === true;
+            const safeTag =
+              typeof summary.baselineTag === 'string' && /^[\w./-]{1,128}$/.test(summary.baselineTag)
+                ? summary.baselineTag
+                : '';
+            // Allow a short, single-line, plain-text note only; neutralize markdown
+            // controls and any embedded URLs/HTML.
+            const safeNote =
+              typeof summary.note === 'string'
+                ? summary.note
+                    .replace(/[\r\n]+/g, ' ')
+                    .replace(/[`<>[\]()*_~|]/g, '')
+                    .replace(/https?:\/\/\S+/gi, '[link removed]')
+                    .trim()
+                    .slice(0, 280)
+                : '';
+
             const marker = '<!-- python-regen-diff -->';
-            const statsLine = summary.changed
-              ? `**${summary.filesChanged}** files changed · \`+${summary.additions}\` / \`-${summary.deletions}\``
+            const statsLine = changed
+              ? `**${filesChanged}** files changed · \`+${additions}\` / \`-${deletions}\``
               : '✅ No differences from the baseline.';
-            const tagLine = summary.baselineTag
-              ? `Baseline tag: \`${summary.baselineTag}\``
+            const tagLine = safeTag
+              ? `Baseline tag: \`${safeTag}\``
               : '_Baseline not bootstrapped yet — entire output shown as added._';
-            const noteLine = summary.note ? `\n> ⚠️ ${summary.note}\n` : '';
+            const noteLine = safeNote ? `\n> ⚠️ ${safeNote}\n` : '';
 
             // When the PR changes generated output, the contributor must refresh
             // the external baseline and pin the new tag in assets.json (test-proxy
             // "push" model), so the baseline travels with the PR.
-            const actionBlock = summary.changed
+            const actionBlock = changed
               ? [
                   '',
                   '<details><summary>👇 This PR changes generated output — update the baseline</summary>',
