@@ -3,26 +3,26 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>azure/parameters-body-root/parameters/bodyroot/models/__init__.py · Python emitter generated test diff (PR #4)</title>
+<title>azure/parameters-body-root/generated_tests/testpreparer.py · Python emitter generated test diff (PR #4)</title>
 <link rel="stylesheet" href="../diff2html.css" />
 </head>
 <body>
 <header>
-  <h1>azure/parameters-body-root/parameters/bodyroot/models/__init__.py</h1>
-  <div class="meta"><span class="add">+29</span> / <span class="del">-0</span> · added</div>
+  <h1>azure/parameters-body-root/generated_tests/testpreparer.py</h1>
+  <div class="meta"><span class="add">+26</span> / <span class="del">-0</span> · added</div>
 </header><nav class="filenav">
   <a href="../index.html">☰ All files</a>
   <span class="spacer"></span>
-  <a href="337.html">← Prev</a> <span class="counter">338 / 810</span> <a href="339.html">Next →</a>
+  <a href="337.html">← Prev</a> <span class="counter">338 / 871</span> <a href="339.html">Next →</a>
 </nav>
 <div class="content">
 <div class="d2h-wrapper d2h-light-color-scheme">
-    <div id="d2h-069865" class="d2h-file-wrapper" data-lang="py">
+    <div id="d2h-272301" class="d2h-file-wrapper" data-lang="py">
     <div class="d2h-file-header">
       <span class="d2h-file-name-wrapper">
     <svg aria-hidden="true" class="d2h-icon" height="16" version="1.1" viewBox="0 0 12 16" width="12">
         <path d="M6 5H2v-1h4v1zM2 8h7v-1H2v1z m0 2h7v-1H2v1z m0 2h7v-1H2v1z m10-7.5v9.5c0 0.55-0.45 1-1 1H1c-0.55 0-1-0.45-1-1V2c0-0.55 0.45-1 1-1h7.5l3.5 3.5z m-1 0.5L8 2H1v12h10V5z"></path>
-    </svg>    <span class="d2h-file-name">current/azure/parameters-body-root/parameters/bodyroot/models/__init__.py</span>
+    </svg>    <span class="d2h-file-name">current/azure/parameters-body-root/generated_tests/testpreparer.py</span>
     <span class="d2h-tag d2h-added d2h-added-tag">ADDED</span></span>
 <label class="d2h-file-collapse">
     <input class="d2h-file-collapse-input" type="checkbox" name="viewed" value="viewed">
@@ -37,37 +37,7 @@
                     <tr>
     <td class="d2h-code-side-linenumber d2h-info"></td>
     <td class="d2h-info">
-        <div class="d2h-code-side-line">@@ -0,0 +1,29 @@</div>
-    </td>
-</tr><tr>
-    <td class="d2h-code-side-linenumber d2h-code-side-emptyplaceholder d2h-cntx d2h-emptyplaceholder">
-      
-    </td>
-    <td class="d2h-cntx d2h-emptyplaceholder">
-        <div class="d2h-code-side-line d2h-code-side-emptyplaceholder">
-            <span class="d2h-code-line-prefix">&nbsp;</span>
-            <span class="d2h-code-line-ctn"><br></span>
-        </div>
-    </td>
-</tr><tr>
-    <td class="d2h-code-side-linenumber d2h-code-side-emptyplaceholder d2h-cntx d2h-emptyplaceholder">
-      
-    </td>
-    <td class="d2h-cntx d2h-emptyplaceholder">
-        <div class="d2h-code-side-line d2h-code-side-emptyplaceholder">
-            <span class="d2h-code-line-prefix">&nbsp;</span>
-            <span class="d2h-code-line-ctn"><br></span>
-        </div>
-    </td>
-</tr><tr>
-    <td class="d2h-code-side-linenumber d2h-code-side-emptyplaceholder d2h-cntx d2h-emptyplaceholder">
-      
-    </td>
-    <td class="d2h-cntx d2h-emptyplaceholder">
-        <div class="d2h-code-side-line d2h-code-side-emptyplaceholder">
-            <span class="d2h-code-line-prefix">&nbsp;</span>
-            <span class="d2h-code-line-ctn"><br></span>
-        </div>
+        <div class="d2h-code-side-line">@@ -0,0 +1,26 @@</div>
     </td>
 </tr><tr>
     <td class="d2h-code-side-linenumber d2h-code-side-emptyplaceholder d2h-cntx d2h-emptyplaceholder">
@@ -420,7 +390,7 @@
     <td class="d2h-ins">
         <div class="d2h-code-side-line">
             <span class="d2h-code-line-prefix">+</span>
-            <span class="d2h-code-line-ctn"># pylint: disable=wrong-import-position</span>
+            <span class="d2h-code-line-ctn">from devtools_testutils import AzureRecordedTestCase, PowerShellPreparer</span>
         </div>
     </td>
 </tr><tr>
@@ -430,7 +400,7 @@
     <td class="d2h-ins">
         <div class="d2h-code-side-line">
             <span class="d2h-code-line-prefix">+</span>
-            <span class="d2h-code-line-ctn"><br></span>
+            <span class="d2h-code-line-ctn">import functools</span>
         </div>
     </td>
 </tr><tr>
@@ -440,7 +410,7 @@
     <td class="d2h-ins">
         <div class="d2h-code-side-line">
             <span class="d2h-code-line-prefix">+</span>
-            <span class="d2h-code-line-ctn">from typing import TYPE_CHECKING</span>
+            <span class="d2h-code-line-ctn">from parameters.bodyroot import BodyRootClient</span>
         </div>
     </td>
 </tr><tr>
@@ -460,7 +430,7 @@
     <td class="d2h-ins">
         <div class="d2h-code-side-line">
             <span class="d2h-code-line-prefix">+</span>
-            <span class="d2h-code-line-ctn">if TYPE_CHECKING:</span>
+            <span class="d2h-code-line-ctn"><br></span>
         </div>
     </td>
 </tr><tr>
@@ -470,7 +440,7 @@
     <td class="d2h-ins">
         <div class="d2h-code-side-line">
             <span class="d2h-code-line-prefix">+</span>
-            <span class="d2h-code-line-ctn">    from ._patch import *  # pylint: disable=unused-wildcard-import</span>
+            <span class="d2h-code-line-ctn">class BodyRootClientTestBase(AzureRecordedTestCase):</span>
         </div>
     </td>
 </tr><tr>
@@ -490,7 +460,7 @@
     <td class="d2h-ins">
         <div class="d2h-code-side-line">
             <span class="d2h-code-line-prefix">+</span>
-            <span class="d2h-code-line-ctn"><br></span>
+            <span class="d2h-code-line-ctn">    def create_client(self, endpoint):</span>
         </div>
     </td>
 </tr><tr>
@@ -500,7 +470,7 @@
     <td class="d2h-ins">
         <div class="d2h-code-side-line">
             <span class="d2h-code-line-prefix">+</span>
-            <span class="d2h-code-line-ctn">from ._models import (  # type: ignore</span>
+            <span class="d2h-code-line-ctn">        credential = self.get_credential(BodyRootClient)</span>
         </div>
     </td>
 </tr><tr>
@@ -510,7 +480,7 @@
     <td class="d2h-ins">
         <div class="d2h-code-side-line">
             <span class="d2h-code-line-prefix">+</span>
-            <span class="d2h-code-line-ctn">    BodyRootModel,</span>
+            <span class="d2h-code-line-ctn">        return self.create_client_from_credential(</span>
         </div>
     </td>
 </tr><tr>
@@ -520,7 +490,7 @@
     <td class="d2h-ins">
         <div class="d2h-code-side-line">
             <span class="d2h-code-line-prefix">+</span>
-            <span class="d2h-code-line-ctn">    NestedParameterBody,</span>
+            <span class="d2h-code-line-ctn">            BodyRootClient,</span>
         </div>
     </td>
 </tr><tr>
@@ -530,7 +500,7 @@
     <td class="d2h-ins">
         <div class="d2h-code-side-line">
             <span class="d2h-code-line-prefix">+</span>
-            <span class="d2h-code-line-ctn">)</span>
+            <span class="d2h-code-line-ctn">            credential=credential,</span>
         </div>
     </td>
 </tr><tr>
@@ -540,7 +510,7 @@
     <td class="d2h-ins">
         <div class="d2h-code-side-line">
             <span class="d2h-code-line-prefix">+</span>
-            <span class="d2h-code-line-ctn">from ._patch import __all__ as _patch_all</span>
+            <span class="d2h-code-line-ctn">            endpoint=endpoint,</span>
         </div>
     </td>
 </tr><tr>
@@ -550,7 +520,7 @@
     <td class="d2h-ins">
         <div class="d2h-code-side-line">
             <span class="d2h-code-line-prefix">+</span>
-            <span class="d2h-code-line-ctn">from ._patch import *</span>
+            <span class="d2h-code-line-ctn">        )</span>
         </div>
     </td>
 </tr><tr>
@@ -560,7 +530,7 @@
     <td class="d2h-ins">
         <div class="d2h-code-side-line">
             <span class="d2h-code-line-prefix">+</span>
-            <span class="d2h-code-line-ctn">from ._patch import patch_sdk as _patch_sdk</span>
+            <span class="d2h-code-line-ctn"><br></span>
         </div>
     </td>
 </tr><tr>
@@ -580,7 +550,7 @@
     <td class="d2h-ins">
         <div class="d2h-code-side-line">
             <span class="d2h-code-line-prefix">+</span>
-            <span class="d2h-code-line-ctn">__all__ = [</span>
+            <span class="d2h-code-line-ctn">BodyRootPreparer = functools.partial(</span>
         </div>
     </td>
 </tr><tr>
@@ -590,7 +560,7 @@
     <td class="d2h-ins">
         <div class="d2h-code-side-line">
             <span class="d2h-code-line-prefix">+</span>
-            <span class="d2h-code-line-ctn">    &quot;BodyRootModel&quot;,</span>
+            <span class="d2h-code-line-ctn">    PowerShellPreparer, &quot;bodyroot&quot;, bodyroot_endpoint=&quot;https:&#x2F;&#x2F;fake_bodyroot_endpoint.com&quot;</span>
         </div>
     </td>
 </tr><tr>
@@ -600,37 +570,7 @@
     <td class="d2h-ins">
         <div class="d2h-code-side-line">
             <span class="d2h-code-line-prefix">+</span>
-            <span class="d2h-code-line-ctn">    &quot;NestedParameterBody&quot;,</span>
-        </div>
-    </td>
-</tr><tr>
-    <td class="d2h-code-side-linenumber d2h-ins">
-      27
-    </td>
-    <td class="d2h-ins">
-        <div class="d2h-code-side-line">
-            <span class="d2h-code-line-prefix">+</span>
-            <span class="d2h-code-line-ctn">]</span>
-        </div>
-    </td>
-</tr><tr>
-    <td class="d2h-code-side-linenumber d2h-ins">
-      28
-    </td>
-    <td class="d2h-ins">
-        <div class="d2h-code-side-line">
-            <span class="d2h-code-line-prefix">+</span>
-            <span class="d2h-code-line-ctn">__all__.extend([p for p in _patch_all if p not in __all__])  # pyright: ignore</span>
-        </div>
-    </td>
-</tr><tr>
-    <td class="d2h-code-side-linenumber d2h-ins">
-      29
-    </td>
-    <td class="d2h-ins">
-        <div class="d2h-code-side-line">
-            <span class="d2h-code-line-prefix">+</span>
-            <span class="d2h-code-line-ctn">_patch_sdk()</span>
+            <span class="d2h-code-line-ctn">)</span>
         </div>
     </td>
 </tr>
@@ -645,7 +585,7 @@
 <nav class="filenav">
   <a href="../index.html">☰ All files</a>
   <span class="spacer"></span>
-  <a href="337.html">← Prev</a> <span class="counter">338 / 810</span> <a href="339.html">Next →</a>
+  <a href="337.html">← Prev</a> <span class="counter">338 / 871</span> <a href="339.html">Next →</a>
 </nav>
 </body>
 </html>
