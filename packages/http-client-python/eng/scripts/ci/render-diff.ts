@@ -289,6 +289,35 @@ interface FileDiff {
   status: "added" | "removed" | "modified";
 }
 
+/**
+ * Rewrites a file chunk's diff header so both sides share the same path.
+ *
+ * The diff comes from `git diff --no-index baseline current`, so every header
+ * reads `a/baseline/<path>` vs `b/current/<path>`. Because those two paths
+ * differ only by the temp-dir prefix, diff2html mistakes every file for a
+ * RENAME (showing `{baseline → current}`). Stripping the `baseline/`/`current/`
+ * prefixes makes old === new path, so it renders as a normal modification.
+ */
+function normalizeChunkHeader(chunk: string): string {
+  const lines = chunk.split("\n");
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.startsWith("@@")) break; // header is done once hunks begin
+    if (line.startsWith("diff --git ")) {
+      lines[i] = line.replace(/ a\/baseline\//g, " a/").replace(/ b\/current\//g, " b/");
+    } else if (line.startsWith("--- ")) {
+      lines[i] = line.replace(/^--- a\/baseline\//, "--- a/");
+    } else if (line.startsWith("+++ ")) {
+      lines[i] = line.replace(/^\+\+\+ b\/current\//, "+++ b/");
+    } else if (line.startsWith("rename from ")) {
+      lines[i] = line.replace(/^rename from baseline\//, "rename from ");
+    } else if (line.startsWith("rename to ")) {
+      lines[i] = line.replace(/^rename to current\//, "rename to ");
+    }
+  }
+  return lines.join("\n");
+}
+
 /** Splits a `git diff --no-index` blob into one chunk per file. */
 function splitDiffByFile(diffText: string): FileDiff[] {
   const files: FileDiff[] = [];
@@ -323,7 +352,7 @@ function splitDiffByFile(diffText: string): FileDiff[] {
     const display = strip(isAdded ? newPath : oldPath) || strip(newPath) || "(unknown)";
     files.push({
       path: display,
-      chunk,
+      chunk: normalizeChunkHeader(chunk),
       additions,
       deletions,
       status: isAdded ? "added" : isRemoved ? "removed" : "modified",
