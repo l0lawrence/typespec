@@ -9,7 +9,7 @@ name: Python Regen Diff
 
 on:
   pull_request:
-    branches: ["main"]
+    branches: ["main", "l0lawrence/python-regen-html-diff"]
     paths:
       - "packages/http-client-python/**"
       - ".github/workflows/python-regen-diff.yml"
