@@ -69,11 +69,11 @@ const OUTPUT_DIR = argv.values.output
   : resolve(PACKAGE_ROOT, "temp/diff-site");
 const TITLE = argv.values.title ?? "Python emitter — generated test diff";
 
-// diff2html builds the entire page as a single in-memory string. Side-by-side
-// HTML is ~10-20x the size of the raw unified diff, and V8 caps a string at
-// ~512MB, so a very large diff throws `RangeError: Invalid string length`.
-// Above this raw-diff size we skip inline rendering and link to diff.txt instead.
-const MAX_INLINE_DIFF_BYTES = 12 * 1024 * 1024;
+// Each changed file is rendered as its own page, so we never build one giant
+// HTML string (which throws `RangeError: Invalid string length` past ~512MB).
+// A single file whose diff exceeds this is shown as a raw <pre> instead of a
+// rich side-by-side render, to bound per-page memory/size.
+const MAX_FILE_DIFF_BYTES = 2 * 1024 * 1024;
 
 interface DiffSummary {
   changed: boolean;
@@ -197,11 +197,7 @@ async function main(): Promise<void> {
     rmSync(OUTPUT_DIR, { recursive: true, force: true });
     mkdirSync(OUTPUT_DIR, { recursive: true });
     writeFileSync(join(OUTPUT_DIR, "summary.json"), JSON.stringify(summary, null, 2) + "\n");
-    // Always persist the raw unified diff so a too-large diff is still viewable.
-    if (summary.changed) {
-      writeFileSync(join(OUTPUT_DIR, "diff.txt"), diffText);
-    }
-    writeFileSync(join(OUTPUT_DIR, "index.html"), renderHtml(diffText, summary));
+    writeSite(diffText, summary);
 
     console.log(
       pc.green(
@@ -214,77 +210,252 @@ async function main(): Promise<void> {
   }
 }
 
-/** Builds a self-contained HTML page embedding the diff2html CSS + fragment. */
-function renderHtml(diffText: string, summary: DiffSummary): string {
+interface FileDiff {
+  /** Display path (baseline/current prefixes stripped). */
+  path: string;
+  /** Raw unified-diff chunk for just this file. */
+  chunk: string;
+  additions: number;
+  deletions: number;
+  status: "added" | "removed" | "modified";
+}
+
+/** Splits a `git diff --no-index` blob into one chunk per file. */
+function splitDiffByFile(diffText: string): FileDiff[] {
+  const files: FileDiff[] = [];
+  // Each file section begins with a line `diff --git a/... b/...`.
+  const sections = diffText.split(/(?=^diff --git )/m).filter((s) => s.startsWith("diff --git "));
+  for (const chunk of sections) {
+    const lines = chunk.split("\n");
+    let oldPath = "";
+    let newPath = "";
+    let additions = 0;
+    let deletions = 0;
+    for (const line of lines) {
+      if (line.startsWith("--- ")) {
+        oldPath = line.slice(4).trim();
+      } else if (line.startsWith("+++ ")) {
+        newPath = line.slice(4).trim();
+      } else if (line.startsWith("+") && !line.startsWith("+++")) {
+        additions += 1;
+      } else if (line.startsWith("-") && !line.startsWith("---")) {
+        deletions += 1;
+      }
+    }
+    const strip = (p: string): string =>
+      p
+        .replace(/^["ab]\//, "")
+        .replace(/^a\//, "")
+        .replace(/^b\//, "")
+        .replace(/^baseline\//, "")
+        .replace(/^current\//, "");
+    const isAdded = oldPath === "/dev/null";
+    const isRemoved = newPath === "/dev/null";
+    const display = strip(isAdded ? newPath : oldPath) || strip(newPath) || "(unknown)";
+    files.push({
+      path: display,
+      chunk,
+      additions,
+      deletions,
+      status: isAdded ? "added" : isRemoved ? "removed" : "modified",
+    });
+  }
+  files.sort((a, b) => a.path.localeCompare(b.path));
+  return files;
+}
+
+/** Writes the full multi-page diff site to OUTPUT_DIR. */
+function writeSite(diffText: string, summary: DiffSummary): void {
   const cssPath = require.resolve("diff2html/bundles/css/diff2html.min.css");
-  const css = readFileSync(cssPath, "utf8");
+  const sharedCss = readFileSync(cssPath, "utf8") + "\n" + SITE_CSS;
+  writeFileSync(join(OUTPUT_DIR, "diff2html.css"), sharedCss);
 
-  const diffBytes = Buffer.byteLength(diffText, "utf8");
-  const tooLarge = diffBytes > MAX_INLINE_DIFF_BYTES;
-
-  let body: string;
   if (!summary.changed) {
-    body = `<div class="no-changes">✅ No differences from the baseline.</div>`;
-  } else if (tooLarge) {
-    body = oversizedNotice(diffBytes);
+    writeFileSync(
+      join(OUTPUT_DIR, "index.html"),
+      pageShell(
+        TITLE,
+        headerHtml(summary),
+        `<div class="no-changes">✅ No differences from the baseline.</div>`,
+        ".",
+      ),
+    );
+    return;
+  }
+
+  // Keep a full raw diff available for download.
+  writeFileSync(join(OUTPUT_DIR, "diff.txt"), diffText);
+
+  const files = splitDiffByFile(diffText);
+  const filesDir = join(OUTPUT_DIR, "files");
+  mkdirSync(filesDir, { recursive: true });
+
+  const pad = String(files.length).length;
+  files.forEach((file, i) => {
+    const name = `${String(i + 1).padStart(pad, "0")}.html`;
+    writeFileSync(join(filesDir, name), renderFilePage(file, files, i));
+  });
+
+  writeFileSync(join(OUTPUT_DIR, "index.html"), renderIndexPage(files, summary, pad));
+}
+
+/** Index page: a searchable, navigable list of all changed files. */
+function renderIndexPage(files: FileDiff[], summary: DiffSummary, pad: number): string {
+  const rows = files
+    .map((f, i) => {
+      const href = `files/${String(i + 1).padStart(pad, "0")}.html`;
+      const badge =
+        f.status === "added"
+          ? `<span class="st added">added</span>`
+          : f.status === "removed"
+            ? `<span class="st removed">removed</span>`
+            : `<span class="st modified">modified</span>`;
+      return `<tr data-path="${escapeHtml(f.path.toLowerCase())}">
+  <td class="st-cell">${badge}</td>
+  <td class="path-cell"><a href="${href}">${escapeHtml(f.path)}</a></td>
+  <td class="num add">+${f.additions}</td>
+  <td class="num del">-${f.deletions}</td>
+</tr>`;
+    })
+    .join("\n");
+
+  const body = `
+<input id="filter" type="search" placeholder="Filter ${files.length} files…" autocomplete="off" />
+<p class="hint">Click a file to view its side-by-side diff. <a href="diff.txt">Download the full raw diff</a>.</p>
+<table class="file-list">
+  <thead><tr><th></th><th>File</th><th class="num">+</th><th class="num">−</th></tr></thead>
+  <tbody>
+${rows}
+  </tbody>
+</table>
+<script>
+  const input = document.getElementById('filter');
+  const rows = Array.from(document.querySelectorAll('tbody tr'));
+  input.addEventListener('input', () => {
+    const q = input.value.toLowerCase();
+    for (const r of rows) {
+      r.style.display = r.getAttribute('data-path').includes(q) ? '' : 'none';
+    }
+  });
+</script>`;
+
+  return pageShell(TITLE, headerHtml(summary), body, ".");
+}
+
+/** One page per changed file: rich side-by-side diff with prev/next nav. */
+function renderFilePage(file: FileDiff, files: FileDiff[], index: number): string {
+  const pad = String(files.length).length;
+  const fileName = (i: number): string => `${String(i + 1).padStart(pad, "0")}.html`;
+  const prev = index > 0 ? `<a href="${fileName(index - 1)}">← Prev</a>` : `<span class="muted">← Prev</span>`;
+  const next =
+    index < files.length - 1
+      ? `<a href="${fileName(index + 1)}">Next →</a>`
+      : `<span class="muted">Next →</span>`;
+
+  const chunkBytes = Buffer.byteLength(file.chunk, "utf8");
+  let diffBody: string;
+  if (chunkBytes > MAX_FILE_DIFF_BYTES) {
+    diffBody = `<div class="no-changes">⚠️ This file's diff is too large to render (${(
+      chunkBytes /
+      (1024 * 1024)
+    ).toFixed(1)} MB). <a href="../diff.txt">View it in the raw diff</a>.</div>`;
   } else {
     try {
-      body = diff2html(diffText, {
-        drawFileList: true,
+      diffBody = diff2html(file.chunk, {
+        drawFileList: false,
         matching: "lines",
         outputFormat: "side-by-side",
       });
     } catch (err) {
-      // Most commonly `RangeError: Invalid string length` for very large diffs.
-      console.warn(pc.yellow(`Inline diff rendering failed (${err}); falling back to raw diff.`));
-      body = oversizedNotice(diffBytes);
+      console.warn(pc.yellow(`Rendering ${file.path} failed (${err}); showing raw chunk.`));
+      diffBody = `<pre class="raw">${escapeHtml(file.chunk)}</pre>`;
     }
   }
 
-  const noteHtml = summary.note ? `<p class="note">⚠️ ${escapeHtml(summary.note)}</p>` : "";
+  const nav = `<nav class="filenav">
+  <a href="../index.html">☰ All files</a>
+  <span class="spacer"></span>
+  ${prev} <span class="counter">${index + 1} / ${files.length}</span> ${next}
+</nav>`;
+
+  const header = `<header>
+  <h1>${escapeHtml(file.path)}</h1>
+  <div class="meta"><span class="add">+${file.additions}</span> / <span class="del">-${file.deletions}</span> · ${file.status}</div>
+</header>`;
+
+  return pageShell(`${file.path} · ${TITLE}`, header + nav, diffBody, "..", nav);
+}
+
+function headerHtml(summary: DiffSummary): string {
   const tagLine = summary.baselineTag
     ? `Baseline tag: <code>${escapeHtml(summary.baselineTag)}</code>`
     : "Baseline: <em>none (not bootstrapped)</em>";
+  const noteHtml = summary.note ? `<p class="note">⚠️ ${escapeHtml(summary.note)}</p>` : "";
+  return `<header>
+  <h1>${escapeHtml(TITLE)}</h1>
+  <div class="meta">${tagLine} &nbsp;·&nbsp; ${summary.filesChanged} files changed &nbsp;·&nbsp; <span class="add">+${summary.additions}</span> / <span class="del">-${summary.deletions}</span></div>
+</header>${noteHtml}`;
+}
 
+/** Wraps body content in a full HTML document linking the shared stylesheet. */
+function pageShell(
+  title: string,
+  headerAndNav: string,
+  body: string,
+  cssBase: string,
+  footerNav = "",
+): string {
   return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>${escapeHtml(TITLE)}</title>
-<style>
-${css}
-body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-header { padding: 16px 20px; background: #24292f; color: #fff; }
-header h1 { margin: 0 0 6px; font-size: 18px; }
-header .meta { font-size: 13px; opacity: 0.85; }
-header code { background: rgba(255,255,255,0.15); padding: 1px 5px; border-radius: 4px; }
-.note { color: #9a6700; background: #fff8c5; margin: 12px 20px; padding: 10px 14px; border-radius: 6px; }
-.no-changes { margin: 40px 20px; font-size: 16px; color: #1a7f37; }
-.content { padding: 12px; }
-</style>
+<title>${escapeHtml(title)}</title>
+<link rel="stylesheet" href="${cssBase}/diff2html.css" />
 </head>
 <body>
-<header>
-  <h1>${escapeHtml(TITLE)}</h1>
-  <div class="meta">${tagLine} &nbsp;·&nbsp; ${summary.filesChanged} files changed &nbsp;·&nbsp; <span style="color:#3fb950">+${summary.additions}</span> / <span style="color:#f85149">-${summary.deletions}</span></div>
-</header>
-${noteHtml}
+${headerAndNav}
 <div class="content">
 ${body}
 </div>
+${footerNav}
 </body>
 </html>
 `;
 }
 
-function oversizedNotice(diffBytes: number): string {
-  const mb = (diffBytes / (1024 * 1024)).toFixed(1);
-  return `<div class="no-changes">
-  ⚠️ The diff is too large to render inline (${mb} MB).
-  <br />Download the raw unified diff instead: <a href="diff.txt">diff.txt</a>.
-</div>`;
-}
+/** Site chrome shared across all pages (appended to the diff2html stylesheet). */
+const SITE_CSS = `
+body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; color: #1f2328; }
+header { padding: 16px 20px; background: #24292f; color: #fff; }
+header h1 { margin: 0 0 6px; font-size: 18px; word-break: break-all; }
+header .meta { font-size: 13px; opacity: 0.9; }
+header code { background: rgba(255,255,255,0.15); padding: 1px 5px; border-radius: 4px; }
+.add { color: #3fb950; }
+.del { color: #f85149; }
+.note { color: #9a6700; background: #fff8c5; margin: 12px 20px; padding: 10px 14px; border-radius: 6px; }
+.no-changes { margin: 40px 20px; font-size: 16px; color: #1a7f37; }
+.content { padding: 12px 16px; }
+.hint { color: #57606a; font-size: 13px; margin: 8px 0 16px; }
+#filter { width: 100%; box-sizing: border-box; padding: 8px 12px; font-size: 14px; border: 1px solid #d0d7de; border-radius: 6px; margin-top: 12px; }
+table.file-list { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.file-list th { text-align: left; color: #57606a; font-weight: 600; border-bottom: 1px solid #d0d7de; padding: 6px 8px; }
+table.file-list td { padding: 5px 8px; border-bottom: 1px solid #eaeef2; }
+table.file-list td.path-cell { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+table.file-list td.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+table.file-list a { color: #0969da; text-decoration: none; }
+table.file-list a:hover { text-decoration: underline; }
+.st { font-size: 11px; padding: 1px 6px; border-radius: 999px; text-transform: uppercase; letter-spacing: .03em; }
+.st.added { background: #dafbe1; color: #1a7f37; }
+.st.removed { background: #ffebe9; color: #cf222e; }
+.st.modified { background: #ddf4ff; color: #0969da; }
+nav.filenav { display: flex; align-items: center; gap: 14px; padding: 8px 16px; background: #f6f8fa; border-bottom: 1px solid #d0d7de; font-size: 13px; }
+nav.filenav .spacer { flex: 1; }
+nav.filenav a { color: #0969da; text-decoration: none; }
+nav.filenav .muted { color: #8c959f; }
+nav.filenav .counter { color: #57606a; }
+pre.raw { white-space: pre-wrap; word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: #f6f8fa; padding: 12px; border-radius: 6px; }
+`;
 
 function escapeHtml(value: string): string {
   return value
