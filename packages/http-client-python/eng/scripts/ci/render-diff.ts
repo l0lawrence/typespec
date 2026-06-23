@@ -69,6 +69,12 @@ const OUTPUT_DIR = argv.values.output
   : resolve(PACKAGE_ROOT, "temp/diff-site");
 const TITLE = argv.values.title ?? "Python emitter — generated test diff";
 
+// diff2html builds the entire page as a single in-memory string. Side-by-side
+// HTML is ~10-20x the size of the raw unified diff, and V8 caps a string at
+// ~512MB, so a very large diff throws `RangeError: Invalid string length`.
+// Above this raw-diff size we skip inline rendering and link to diff.txt instead.
+const MAX_INLINE_DIFF_BYTES = 12 * 1024 * 1024;
+
 interface DiffSummary {
   changed: boolean;
   filesChanged: number;
@@ -191,6 +197,10 @@ async function main(): Promise<void> {
     rmSync(OUTPUT_DIR, { recursive: true, force: true });
     mkdirSync(OUTPUT_DIR, { recursive: true });
     writeFileSync(join(OUTPUT_DIR, "summary.json"), JSON.stringify(summary, null, 2) + "\n");
+    // Always persist the raw unified diff so a too-large diff is still viewable.
+    if (summary.changed) {
+      writeFileSync(join(OUTPUT_DIR, "diff.txt"), diffText);
+    }
     writeFileSync(join(OUTPUT_DIR, "index.html"), renderHtml(diffText, summary));
 
     console.log(
@@ -209,13 +219,27 @@ function renderHtml(diffText: string, summary: DiffSummary): string {
   const cssPath = require.resolve("diff2html/bundles/css/diff2html.min.css");
   const css = readFileSync(cssPath, "utf8");
 
-  const body = summary.changed
-    ? diff2html(diffText, {
+  const diffBytes = Buffer.byteLength(diffText, "utf8");
+  const tooLarge = diffBytes > MAX_INLINE_DIFF_BYTES;
+
+  let body: string;
+  if (!summary.changed) {
+    body = `<div class="no-changes">✅ No differences from the baseline.</div>`;
+  } else if (tooLarge) {
+    body = oversizedNotice(diffBytes);
+  } else {
+    try {
+      body = diff2html(diffText, {
         drawFileList: true,
         matching: "lines",
         outputFormat: "side-by-side",
-      })
-    : `<div class="no-changes">✅ No differences from the baseline.</div>`;
+      });
+    } catch (err) {
+      // Most commonly `RangeError: Invalid string length` for very large diffs.
+      console.warn(pc.yellow(`Inline diff rendering failed (${err}); falling back to raw diff.`));
+      body = oversizedNotice(diffBytes);
+    }
+  }
 
   const noteHtml = summary.note ? `<p class="note">⚠️ ${escapeHtml(summary.note)}</p>` : "";
   const tagLine = summary.baselineTag
@@ -252,6 +276,14 @@ ${body}
 </body>
 </html>
 `;
+}
+
+function oversizedNotice(diffBytes: number): string {
+  const mb = (diffBytes / (1024 * 1024)).toFixed(1);
+  return `<div class="no-changes">
+  ⚠️ The diff is too large to render inline (${mb} MB).
+  <br />Download the raw unified diff instead: <a href="diff.txt">diff.txt</a>.
+</div>`;
 }
 
 function escapeHtml(value: string): string {
