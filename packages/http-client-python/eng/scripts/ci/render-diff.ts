@@ -18,7 +18,14 @@
  */
 
 import { execFileSync } from "child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import {
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "fs";
 import { cp, mkdtemp } from "fs/promises";
 import { createRequire } from "module";
 import { tmpdir } from "os";
@@ -106,6 +113,30 @@ function stripCr(text: string): string {
   return text.replace(/\r/g, "");
 }
 
+/**
+ * Recursively rewrites every text file under `dir` with all `\r` bytes removed,
+ * so line endings are pure LF. The baseline may have been generated on Windows,
+ * where Python writing `\r\n` to a text-mode file yields `\r\r\n` (double CR);
+ * `git diff --ignore-cr-at-eol` only ignores a *single* trailing CR, so without
+ * this those lines show as spurious changes. Normalizing both trees to LF makes
+ * the comparison truly line-ending agnostic. Files containing a NUL byte are
+ * treated as binary and left untouched.
+ */
+function normalizeEol(dir: string): void {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      normalizeEol(full);
+    } else if (entry.isFile()) {
+      const buf = readFileSync(full);
+      if (buf.includes(0)) continue; // binary
+      if (buf.includes(0x0d)) {
+        writeFileSync(full, buf.toString("utf8").replace(/\r/g, ""));
+      }
+    }
+  }
+}
+
 /** Parses `git diff --numstat` output into aggregate counts. */
 function parseNumstat(numstat: string): { files: number; additions: number; deletions: number } {
   let files = 0;
@@ -158,6 +189,11 @@ async function main(): Promise<void> {
         "No baseline tag is configured in assets.json yet; the entire current output is shown as added.";
       console.warn(pc.yellow(note));
     }
+
+    // Normalize line endings to LF on both sides so EOL artifacts (e.g. a
+    // Windows-generated baseline with `\r\r\n`) don't masquerade as real diffs.
+    normalizeEol(currentDir);
+    normalizeEol(baselineDir);
 
     // git diff --no-index returns exit code 1 when there are differences.
     // --ignore-cr-at-eol makes the diff line-ending agnostic: the baseline may
