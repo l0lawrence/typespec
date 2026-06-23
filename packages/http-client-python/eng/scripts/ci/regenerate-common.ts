@@ -70,11 +70,7 @@ export interface BuildTaskGroupsOptions {
 
 // ---- Public constants ----
 
-export const SKIP_SPECS: string[] = [
-  "type/file",
-  "service/multiple-services",
-  "azure/client-generator-core/response-as-bool",
-];
+export const SKIP_SPECS: string[] = ["type/file"];
 
 export const SpecialFlags: Record<string, Record<string, any>> = {
   azure: {
@@ -692,6 +688,7 @@ export const LEGACY_BASELINE_SUBPATHS = [
   "azure/generation-subdir2",
   "unbranded/generation-subdir",
   "unbranded/generation-subdir2",
+  "azure/azure-client-generator-core-alternate-type",
 ];
 
 /**
