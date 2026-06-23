@@ -17,7 +17,7 @@
  */
 
 import { execFileSync } from "child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { cp, mkdir, mkdtemp } from "fs/promises";
 import { tmpdir } from "os";
 import { dirname, join, resolve } from "path";
@@ -66,6 +66,29 @@ function pushUrl(repoSlug: string): string {
     return `https://x-access-token:${token}@github.com/${repoSlug}.git`;
   }
   return `https://github.com/${repoSlug}.git`;
+}
+
+/**
+ * Recursively rewrites every text file under `dir` with all `\r` bytes removed.
+ * On Windows, Python writing `\r\n` to a text-mode file yields `\r\r\n` (double
+ * CR); relying on git's `eol=lf` normalization can leave a stray inner CR, which
+ * later shows up as spurious diff noise. Stripping all CR here guarantees the
+ * stored baseline is pure LF regardless of the maintainer's OS. Files containing
+ * a NUL byte are treated as binary and left untouched.
+ */
+function normalizeEol(dir: string): void {
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      normalizeEol(full);
+    } else if (entry.isFile()) {
+      const buf = readFileSync(full);
+      if (buf.includes(0)) continue; // binary
+      if (buf.includes(0x0d)) {
+        writeFileSync(full, buf.toString("utf8").replace(/\r/g, ""));
+      }
+    }
+  }
 }
 
 async function main(): Promise<void> {
@@ -136,6 +159,10 @@ async function main(): Promise<void> {
     // detected binaries), so a Windows maintainer's CRLF files don't poison the
     // baseline. Written before `git add` so it applies to the staged files.
     writeFileSync(join(tempDir, ".gitattributes"), "* text=auto eol=lf\n");
+
+    // Belt-and-suspenders: strip stray CR bytes (incl. Windows double-CR
+    // `\r\r\n`) that git's eol=lf normalization can leave behind.
+    normalizeEol(prefixRoot);
 
     git(["add", "-A"]);
     const status = git(["status", "--porcelain"], { allowFail: true });
