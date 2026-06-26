@@ -16,6 +16,7 @@ permissions:
   contents: write
   pull-requests: write
   issues: write
+  statuses: write
   actions: read
 
 concurrency:
@@ -100,8 +101,9 @@ jobs:
             // Append a short-SHA cache-buster: re-runs publish to the same
             // pr/<num>/ path, and GitHub Pages' CDN serves a stale index.html
             // without a fresh query string (the file count would look outdated).
-            const headSha = ((context.payload.workflow_run || {}).head_sha || '').slice(0, 7);
-            const pagesUrl = `https://${owner}.github.io/${repo}/pr/${prNumber}/${headSha ? `?v=${headSha}` : ''}`;
+            const fullSha = (context.payload.workflow_run || {}).head_sha || '';
+            const shortSha = fullSha.slice(0, 7);
+            const pagesUrl = `https://${owner}.github.io/${repo}/pr/${prNumber}/${shortSha ? `?v=${shortSha}` : ''}`;
 
             let summary = { changed: true, filesChanged: 0, additions: 0, deletions: 0, baselineTag: '', note: undefined };
             try {
@@ -190,4 +192,26 @@ jobs:
             } else {
               await github.rest.issues.createComment({ owner, repo, issue_number: prNumber, body });
               core.info('Created new diff comment');
+            }
+
+            // Gate the PR (test-proxy "push" model): a generated diff means the
+            // contributor must regenerate and pin the new baseline tag in
+            // assets.json. Surface that as a commit status on the PR head so it
+            // can be made a required check; it flips to success once the
+            // regenerated output matches the baseline (0 differences).
+            if (fullSha) {
+              await github.rest.repos.createCommitStatus({
+                owner,
+                repo,
+                sha: fullSha,
+                context: 'python-regen-diff/baseline',
+                state: changed ? 'failure' : 'success',
+                target_url: pagesUrl,
+                description: changed
+                  ? `${filesChanged} file(s) differ — regenerate and bump assets.json`
+                  : 'Generated output matches the baseline',
+              });
+              core.info(`Set commit status (${changed ? 'failure' : 'success'}) on ${fullSha}`);
+            } else {
+              core.warning('No head SHA available; skipping commit status.');
             }
