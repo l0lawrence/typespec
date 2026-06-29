@@ -94,7 +94,7 @@ jobs:
           # Allowlist the rendered output (no arbitrary files from the artifact)
           # so a fork PR cannot host unexpected content on the *.github.io origin.
           cp diff-site/index.html "$dest/" 2>/dev/null || true
-          cp diff-site/diff2html.css "$dest/" 2>/dev/null || true
+          cp diff-site/styles.css "$dest/" 2>/dev/null || true
           cp diff-site/summary.json "$dest/" 2>/dev/null || true
           cp diff-site/diff.txt "$dest/" 2>/dev/null || true
           if [ -d diff-site/files ]; then

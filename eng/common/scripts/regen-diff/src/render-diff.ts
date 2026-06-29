@@ -34,7 +34,6 @@ import {
   writeFileSync,
 } from "fs";
 import { cp, mkdtemp } from "fs/promises";
-import { createRequire } from "module";
 import { tmpdir } from "os";
 import { join, resolve } from "path";
 import pc from "picocolors";
@@ -43,10 +42,6 @@ import { pathToFileURL } from "url";
 import { readAssetsConfig, restoreFullBaseline } from "./assets.js";
 import { readRegenDiffConfig, type RegenDiffConfig } from "./config.js";
 
-// diff2html is CommonJS; load via createRequire for ESM.
-const require = createRequire(import.meta.url);
-// eslint-disable-next-line @typescript-eslint/no-var-requires
-const { html: diff2html } = require("diff2html") as typeof import("diff2html");
 
 export interface RenderOptions {
   packageRoot: string;
@@ -456,9 +451,7 @@ function splitDiffByFile(diffText: string): FileDiff[] {
 
 /** Writes the full multi-page diff site to OUTPUT_DIR. */
 function writeSite(diffText: string, summary: DiffSummary): void {
-  const cssPath = require.resolve("diff2html/bundles/css/diff2html.min.css");
-  const sharedCss = readFileSync(cssPath, "utf8") + "\n" + SITE_CSS;
-  writeFileSync(join(OUTPUT_DIR, "diff2html.css"), sharedCss);
+  writeFileSync(join(OUTPUT_DIR, "styles.css"), SITE_CSS);
 
   if (!summary.changed) {
     writeFileSync(
@@ -598,7 +591,58 @@ function renderFileRow(name: string, href: string, file: FileDiff): string {
 </div>`;
 }
 
-/** One page per changed file: rich side-by-side diff with prev/next nav. */
+/**
+ * Renders a unified-diff chunk as line-numbered, colorized HTML rows.
+ * Replaces the former diff2html dependency with a small self-contained renderer
+ * so the tool has zero runtime rendering dependencies.
+ */
+function renderUnifiedDiff(chunk: string): string {
+  const rows: string[] = [];
+  let oldLn = 0;
+  let newLn = 0;
+  const row = (cls: string, oldNo: string, newNo: string, text: string): string =>
+    `<div class="dl ${cls}"><span class="ln">${oldNo}</span><span class="ln">${newNo}</span>` +
+    `<span class="tx">${escapeHtml(text.length ? text : " ")}</span></div>`;
+
+  for (const raw of chunk.split("\n")) {
+    const line = raw.replace(/\r$/, "");
+    if (line.startsWith("@@")) {
+      const m = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/.exec(line);
+      if (m) {
+        oldLn = Number(m[1]);
+        newLn = Number(m[2]);
+      }
+      rows.push(row("hunk", "", "", line));
+      continue;
+    }
+    if (
+      line.startsWith("diff ") ||
+      line.startsWith("index ") ||
+      line.startsWith("--- ") ||
+      line.startsWith("+++ ") ||
+      line.startsWith("new file") ||
+      line.startsWith("deleted file") ||
+      line.startsWith("rename ") ||
+      line.startsWith("similarity ") ||
+      line.startsWith("old mode") ||
+      line.startsWith("new mode") ||
+      line.startsWith("\\")
+    ) {
+      rows.push(row("meta", "", "", line));
+      continue;
+    }
+    if (line.startsWith("+")) {
+      rows.push(row("add", "", String(newLn++), line));
+    } else if (line.startsWith("-")) {
+      rows.push(row("del", String(oldLn++), "", line));
+    } else {
+      rows.push(row("ctx", String(oldLn++), String(newLn++), line));
+    }
+  }
+  return `<div class="udiff">${rows.join("")}</div>`;
+}
+
+/** One page per changed file: line-numbered colorized diff with prev/next nav. */
 function renderFilePage(file: FileDiff, files: FileDiff[], index: number): string {
   const pad = String(files.length).length;
   const fileName = (i: number): string => `${String(i + 1).padStart(pad, "0")}.html`;
@@ -617,16 +661,7 @@ function renderFilePage(file: FileDiff, files: FileDiff[], index: number): strin
       (1024 * 1024)
     ).toFixed(1)} MB). <a href="../diff.txt">View it in the raw diff</a>.</div>`;
   } else {
-    try {
-      diffBody = diff2html(file.chunk, {
-        drawFileList: false,
-        matching: "lines",
-        outputFormat: "side-by-side",
-      });
-    } catch (err) {
-      console.warn(pc.yellow(`Rendering ${file.path} failed (${err}); showing raw chunk.`));
-      diffBody = `<pre class="raw">${escapeHtml(file.chunk)}</pre>`;
-    }
+    diffBody = renderUnifiedDiff(file.chunk);
   }
 
   const nav = `<nav class="filenav">
@@ -668,7 +703,7 @@ function pageShell(
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${escapeHtml(title)}</title>
-<link rel="stylesheet" href="${cssBase}/diff2html.css" />
+<link rel="stylesheet" href="${cssBase}/styles.css" />
 </head>
 <body>
 ${headerAndNav}
@@ -721,6 +756,18 @@ nav.filenav a { color: #0969da; text-decoration: none; }
 nav.filenav .muted { color: #8c959f; }
 nav.filenav .counter { color: #57606a; }
 pre.raw { white-space: pre-wrap; word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; background: #f6f8fa; padding: 12px; border-radius: 6px; }
+.udiff { border: 1px solid #d0d7de; border-radius: 6px; overflow-x: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; line-height: 20px; background: #fff; }
+.dl { display: flex; white-space: pre; }
+.dl .ln { flex: 0 0 auto; width: 3.5em; padding: 0 8px; text-align: right; color: #6e7781; background: #f6f8fa; border-right: 1px solid #eaeef2; user-select: none; -webkit-user-select: none; font-variant-numeric: tabular-nums; }
+.dl .tx { flex: 1 1 auto; padding: 0 10px; }
+.dl.add { background: #e6ffec; }
+.dl.add .ln { background: #ccffd8; color: #1a7f37; }
+.dl.del { background: #ffebe9; }
+.dl.del .ln { background: #ffd7d5; color: #cf222e; }
+.dl.hunk { background: #ddf4ff; color: #0550ae; }
+.dl.hunk .ln { background: #ddf4ff; }
+.dl.hunk .tx { color: #0550ae; }
+.dl.meta { color: #6e7781; background: #fbfbfb; }
 `;
 
 function escapeHtml(value: string): string {
