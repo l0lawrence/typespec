@@ -10,7 +10,6 @@
     "test:tsc": "tsc -p ."
   },
   "dependencies": {
-    "diff2html": "^3.4.56",
     "picocolors": "~1.1.1"
   },
   "devDependencies": {
