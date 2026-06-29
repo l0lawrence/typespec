@@ -53,6 +53,7 @@
     "regenerate:push-assets": "tsx ./eng/scripts/ci/push-assets.ts",
     "regenerate:render-diff": "tsx ./eng/scripts/ci/render-diff.ts",
     "regenerate:diff": "tsx ./eng/scripts/ci/render-diff.ts --open",
+    "regenerate:vscode-diff": "tsx ./eng/scripts/ci/render-diff.ts --vscode",
     "regenerate:review": "npm run regenerate && npm run regenerate:diff",
     "ci": "npm run test:emitter && npm run ci:generated",
     "ci:generated": "tsx ./eng/scripts/ci/run-tests.ts --generator --env=ci",

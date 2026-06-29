@@ -17,7 +17,7 @@
  *   tsx ./eng/scripts/ci/render-diff.ts [--output <dir>] [--generated <dir>] [--title <t>]
  */
 
-import { execFileSync } from "child_process";
+import { execFileSync, execSync } from "child_process";
 import {
   existsSync,
   mkdirSync,
@@ -48,6 +48,8 @@ const argv = parseArgs({
     generated: { type: "string", short: "g" },
     title: { type: "string", short: "t" },
     open: { type: "boolean" },
+    vscode: { type: "boolean" },
+    max: { type: "string" },
     help: { type: "boolean", short: "h" },
   },
 });
@@ -63,6 +65,10 @@ ${pc.bold("Options:")}
   -g, --generated <dir>  Current generated dir (default: tests/generated).
   -t, --title <text>     Title shown on the diff page.
       --open             Open the rendered diff in your default browser.
+      --vscode           Open each changed file as a native VS Code editor diff
+                         (baseline vs current) and keep both trees on disk at
+                         temp/diff-trees/ for use with a folder-compare extension.
+      --max <n>          Max number of files to open in VS Code (default 40).
   -h, --help             Show this help.
 `);
   process.exit(0);
@@ -283,6 +289,22 @@ async function main(): Promise<void> {
     if (argv.values.open) {
       openInBrowser(indexPath);
     }
+
+    // Open the diff natively in VS Code: persist both normalized trees to a
+    // stable path and pop a side-by-side editor for each changed file. This is
+    // the "VS Code changes" experience — the generated output is git-ignored, so
+    // it never shows up in Source Control on its own.
+    if (argv.values.vscode) {
+      const treesDir = resolve(PACKAGE_ROOT, "temp/diff-trees");
+      const baselineOut = join(treesDir, "baseline");
+      const currentOut = join(treesDir, "current");
+      rmSync(treesDir, { recursive: true, force: true });
+      mkdirSync(treesDir, { recursive: true });
+      await cp(baselineDir, baselineOut, { recursive: true });
+      await cp(currentDir, currentOut, { recursive: true });
+      const max = Number(argv.values.max) > 0 ? Number(argv.values.max) : 40;
+      openInVscode(diffText, baselineOut, currentOut, summary.filesChanged, max);
+    }
   } finally {
     rmSync(workDir, { recursive: true, force: true });
   }
@@ -303,6 +325,88 @@ function openInBrowser(target: string): void {
   } catch (err) {
     console.warn(pc.yellow(`Could not open a browser automatically: ${err}`));
   }
+}
+
+/**
+ * Parses `diff --git a/baseline/<rel> b/current/<rel>` header lines to recover
+ * the per-file relative paths that changed.
+ */
+function changedRelPaths(diffText: string): string[] {
+  const paths: string[] = [];
+  for (const line of diffText.split("\n")) {
+    const m = /^diff --git a\/baseline\/(.+?) b\/current\/(.+)$/.exec(line);
+    if (m) paths.push(m[2]);
+  }
+  return paths;
+}
+
+/**
+ * Opens each changed file as a native VS Code editor diff (`code --diff
+ * <baseline> <current>`). Added/removed files (one side missing) are opened on
+ * their own. Capped at `max` tabs; for larger sets the persisted folder pair is
+ * printed so a folder-compare extension or the HTML page can show the rest.
+ */
+function openInVscode(
+  diffText: string,
+  baselineDir: string,
+  currentDir: string,
+  filesChanged: number,
+  max: number,
+): void {
+  const rels = changedRelPaths(diffText);
+
+  console.log(pc.cyan(`Baseline tree:  ${baselineDir}`));
+  console.log(pc.cyan(`Current tree:   ${currentDir}`));
+
+  if (rels.length === 0) {
+    console.log(pc.green("No changed files — nothing to open in VS Code."));
+    return;
+  }
+
+  // `code` is a shell script / .cmd on most platforms, so it must be launched
+  // through a shell (Node refuses to execFile a .cmd directly). Compose a single
+  // quoted command string so the shell parses paths with spaces correctly
+  // (passing an args array with shell:true is deprecated, DEP0190).
+  const q = (p: string) => `"${p.replace(/"/g, '\\"')}"`;
+  const code = (parts: string[]) => execSync(["code", ...parts].join(" "), { stdio: "ignore" });
+
+  const toOpen = rels.slice(0, max);
+  if (rels.length > max) {
+    console.warn(
+      pc.yellow(
+        `${filesChanged} files changed; opening the first ${max} in VS Code. ` +
+          `Use --max <n> to open more, the HTML page for all of them, or a ` +
+          `folder-compare extension (e.g. "Compare Folders") on the two trees above.`,
+      ),
+    );
+  }
+
+  let opened = 0;
+  for (const rel of toOpen) {
+    const baseFile = join(baselineDir, rel);
+    const curFile = join(currentDir, rel);
+    const hasBase = existsSync(baseFile);
+    const hasCur = existsSync(curFile);
+    try {
+      if (hasBase && hasCur) {
+        code(["--diff", q(baseFile), q(curFile)]);
+      } else if (hasCur) {
+        code([q(curFile)]); // added
+      } else if (hasBase) {
+        code([q(baseFile)]); // removed
+      }
+      opened += 1;
+    } catch (err) {
+      console.warn(
+        pc.yellow(
+          `Could not launch VS Code (is the "code" command on PATH?). ` +
+            `Compare the two trees above manually. Details: ${err}`,
+        ),
+      );
+      return;
+    }
+  }
+  console.log(pc.green(`Opened ${opened} file diff(s) in VS Code.`));
 }
 
 interface FileDiff {
