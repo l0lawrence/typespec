@@ -1,0 +1,157 @@
+name: Python Emitter Regen Diff
+
+# Regenerates the Python emitter's generated test code with the emitter at the PR
+# head and at a pinned baseline commit, then diffs the two outputs. CI fails when
+# they differ. An HTML view of the diff is uploaded as an artifact, and a PR comment
+# (posted by the companion "Python Emitter Regen Diff Comment" workflow) links to it.
+#
+# Proof of concept for the http-client-python emitter; intended to be replicated for
+# the other language emitters and to Azure/typespec-azure.
+
+on:
+  pull_request:
+    branches: [main, "release/*"]
+    paths:
+      - "packages/http-client-python/**"
+      - ".github/workflows/python-emitter-regen-diff.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  read-baseline:
+    name: Read baseline SHA
+    runs-on: ubuntu-latest
+    if: |
+      !startsWith(github.head_ref, 'dependabot/') &&
+      !startsWith(github.head_ref, 'publish/') &&
+      !startsWith(github.head_ref, 'backmerge/') &&
+      !startsWith(github.head_ref, 'revert-')
+    outputs:
+      sha: ${{ steps.read.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Read pinned baseline commit
+        id: read
+        run: |
+          FILE=packages/http-client-python/eng/regen-diff-baseline.txt
+          SHA=$(grep -v '^[[:space:]]*#' "$FILE" | grep -v '^[[:space:]]*$' | head -n1 | tr -d '[:space:]')
+          if [ -z "$SHA" ]; then echo "No baseline SHA found in $FILE" >&2; exit 1; fi
+          echo "Baseline SHA: $SHA"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+  generate:
+    name: Generate (${{ matrix.which }})
+    needs: read-baseline
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        which: [head, base]
+    steps:
+      - name: Checkout ${{ matrix.which }}
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ matrix.which == 'base' && needs.read-baseline.outputs.sha || github.event.pull_request.head.sha || github.sha }}
+
+      - uses: ./.github/actions/setup
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Build http-client-python (and deps)
+        run: npx turbo run build --filter=@typespec/http-client-python
+
+      - name: Set up Python environment
+        run: npm run install
+        working-directory: packages/http-client-python
+
+      - name: Regenerate
+        run: npm run regenerate
+        working-directory: packages/http-client-python
+
+      - name: Upload generated code
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-generated-${{ matrix.which }}
+          path: packages/http-client-python/tests/generated
+          retention-days: 1
+          include-hidden-files: true
+
+  diff:
+    name: Diff & report
+    needs: [read-baseline, generate]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+
+      - name: Download head generated code
+        uses: actions/download-artifact@v8
+        with:
+          name: python-generated-head
+          path: gen/head
+
+      - name: Download base generated code
+        uses: actions/download-artifact@v8
+        with:
+          name: python-generated-base
+          path: gen/base
+
+      - name: Build diff report
+        run: |
+          npx -y tsx packages/http-client-python/eng/scripts/ci/regen-diff-html.ts \
+            --base gen/base \
+            --head gen/head \
+            --out regen-diff-out \
+            --baseline-sha "${{ needs.read-baseline.outputs.sha }}"
+
+      - name: Stage comment payload
+        run: |
+          mkdir -p comment-payload
+          cp regen-diff-out/comment-body.md comment-payload/comment-body.md
+          cp regen-diff-out/result.json comment-payload/result.json
+          echo "${{ github.event.pull_request.number }}" > comment-payload/pr-number.txt
+
+      - name: Upload HTML diff
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-regen-diff-html
+          path: regen-diff-out/regen-diff.html
+          retention-days: 14
+
+      - name: Upload diff patch
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-regen-diff-patch
+          path: regen-diff-out/regen-diff.patch
+          retention-days: 14
+
+      - name: Upload comment payload
+        uses: actions/upload-artifact@v7
+        with:
+          name: python-regen-diff-comment
+          path: comment-payload
+          retention-days: 1
+
+      - name: Fail if generated code changed
+        run: |
+          HAS_DIFF=$(node -e "process.stdout.write(String(require('./regen-diff-out/result.json').hasDiff))")
+          if [ "$HAS_DIFF" = "true" ]; then
+            echo "::error::Regenerating the Python emitter changed the generated code vs the pinned baseline. See the 'python-regen-diff-html' artifact for details."
+            cat regen-diff-out/comment-body.md
+            exit 1
+          fi
+          echo "No generated-code differences against the baseline."

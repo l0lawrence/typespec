@@ -1,0 +1,12 @@
+# Pinned baseline commit for the Python emitter regen-diff CI check.
+#
+# The regen-diff workflow regenerates the generated test code twice:
+#   1. with the emitter at the PR head
+#   2. with the emitter at the commit below
+# and diffs the two outputs. CI fails if they differ, and a PR comment links to
+# an HTML view of the diff.
+#
+# Bump this SHA (usually to a recent `main`) whenever the current generated output
+# is intentionally accepted as the new baseline. Lines starting with `#` and blank
+# lines are ignored; the first non-comment line must be a 40-char commit SHA.
+212a9eda5a651f723b9f6054120564e4083e715b
