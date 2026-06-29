@@ -61,6 +61,10 @@ jobs:
       - name: Regenerate tests
         run: npm run regenerate
 
+      - name: Install regen-diff tool
+        working-directory: eng/common/scripts/regen-diff
+        run: npm install --no-package-lock
+
       - name: Render HTML diff
         env:
           DIFF_TITLE: "Python emitter generated test diff (PR #${{ github.event.pull_request.number || 'manual' }})"
@@ -72,6 +76,6 @@ jobs:
       - name: Upload diff site
         uses: actions/upload-artifact@v7
         with:
-          name: python-regen-diff
+          name: regen-diff-site
           path: ${{ runner.temp }}/diff-site
           retention-days: 7
