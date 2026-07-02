@@ -77,6 +77,10 @@ namespace Microsoft.TypeSpec.Generator.Providers
 
         public bool IsUnknownDiscriminatorModel => _inputModel.IsUnknownDiscriminatorModel;
 
+        // Whether this model is reused from another shipped package (linked via an `external` block)
+        // rather than emitted by this library. Such a type's constructor surface is owned elsewhere.
+        internal bool IsExternal => _inputModel.External is not null;
+
         public string? DiscriminatorValue => _inputModel.DiscriminatorValue;
 
         private ValueExpression? _discriminatorValueExpression;
@@ -142,11 +146,14 @@ namespace Microsoft.TypeSpec.Generator.Providers
                     return existingProvider;
                 }
 
-                // Try to find the type in the customization compilation (excluding referenced assemblies)
+                // Try to find the type in the customization compilation. Referenced assemblies are
+                // included so custom bases from framework or external packages are represented by
+                // normal symbol-backed providers.
                 var baseTypeProvider = CodeModelGenerator.Instance.SourceInputModel.FindForTypeInCustomization(
                     baseType.Namespace,
                     baseType.Name,
-                    baseType.DeclaringType?.Name);
+                    baseType.DeclaringType?.Name,
+                    includeReferencedAssemblies: true);
 
                 if (baseTypeProvider != null)
                 {
@@ -155,8 +162,8 @@ namespace Microsoft.TypeSpec.Generator.Providers
                     return baseTypeProvider;
                 }
 
-                // If we couldn't find the type symbol (e.g., type is from a referenced assembly),
-                // create a SystemObjectTypeProvider that represents the external type
+                // If we couldn't find the type symbol, create a SystemObjectTypeProvider that
+                // represents the external type without member metadata.
                 var systemObjectTypeProvider = new SystemObjectTypeProvider(baseType);
                 // Cache it in CSharpTypeMap for future lookups
                 CodeModelGenerator.Instance.TypeFactory.CSharpTypeMap[baseType] = systemObjectTypeProvider;
@@ -352,7 +359,9 @@ namespace Microsoft.TypeSpec.Generator.Providers
             foreach (var property in _inputModel.Properties)
             {
                 if (IsDiscriminator(property))
+                {
                     continue;
+                }
 
                 var derivedProperty = InputDerivedProperties.FirstOrDefault(p => p.Value.ContainsKey(property.Name)).Value?[property.Name];
                 if (derivedProperty is not null)
@@ -620,10 +629,22 @@ namespace Microsoft.TypeSpec.Generator.Providers
                     LastContractPropertiesMap.TryGetValue(outputProperty.Name, out var lastContractPropertyType) &&
                     !lastContractPropertyType.Equals(outputProperty.Type))
                 {
-                    outputProperty.Type = lastContractPropertyType.ApplyInputSpecProperty(property);
-                    CodeModelGenerator.Instance.Emitter.Info(
-                        $"Changed property '{Name}.{outputProperty.Name}' type to '{lastContractPropertyType}' to match last contract.",
-                        BackCompatibilityChangeCategory.PropertyTypePreserved);
+                    // If the previous property type (or a type nested in it) has been intentionally
+                    // removed and that removal is accepted in the ApiCompat baseline, preserving it
+                    // would reference a now-deleted type. Honor the baseline and allow the new type.
+                    if (CodeModelGenerator.Instance.SourceInputModel?.ApiCompatBaseline.ReferencesSuppressedType(lastContractPropertyType) == true)
+                    {
+                        CodeModelGenerator.Instance.Emitter.Info(
+                            $"Allowing property '{Name}.{outputProperty.Name}' type change to '{outputProperty.Type}'; previous type '{lastContractPropertyType}' is an accepted removal in the ApiCompat baseline.",
+                            BackCompatibilityChangeCategory.BaselineAcceptedRemovalSkipped);
+                    }
+                    else
+                    {
+                        outputProperty.Type = lastContractPropertyType.ApplyInputSpecProperty(property);
+                        CodeModelGenerator.Instance.Emitter.Info(
+                            $"Changed property '{Name}.{outputProperty.Name}' type to '{lastContractPropertyType}' to match last contract.",
+                            BackCompatibilityChangeCategory.PropertyTypePreserved);
+                    }
                 }
 
                 if (!isDiscriminator)
@@ -689,9 +710,15 @@ namespace Microsoft.TypeSpec.Generator.Providers
         private static bool DomainEqual(InputProperty baseProperty, InputProperty derivedProperty)
         {
             if (baseProperty.Type.Name != derivedProperty.Type.Name)
+            {
                 return false;
+            }
+
             if (baseProperty.IsRequired != derivedProperty.IsRequired)
+            {
                 return false;
+            }
+
             var baseNullable = baseProperty.Type is InputNullableType;
             return baseNullable ? derivedProperty.Type is InputNullableType : derivedProperty.Type is not InputNullableType;
         }
@@ -1023,7 +1050,9 @@ namespace Microsoft.TypeSpec.Generator.Providers
 
                 // only add the raw data field if it has not already been added as a parameter for BinaryData additional properties
                 if (RawDataField != null && !SupportsBinaryDataAdditionalProperties)
+                {
                     constructorParameters.Add(RawDataField.AsParameter);
+                }
             }
 
             return (constructorParameters, constructorInitializer);
@@ -1267,12 +1296,16 @@ namespace Microsoft.TypeSpec.Generator.Providers
             var wireInfo = property?.WireInfo ?? field?.WireInfo;
             // skip those non-spec properties
             if (wireInfo == null)
+            {
                 return;
+            }
 
             // skip if this is an overload / new of a base property
             // also skip if the base was required or the derived property is not required
             if (property?.BaseProperty is not null && (!isPrimaryConstructor || wireInfo.IsRequired == false || property.BaseProperty.WireInfo?.IsRequired == true))
+            {
                 return;
+            }
 
             ValueExpression assignee = property != null
                 ? property.BackingField is null ? property : property.BackingField
