@@ -5,4 +5,4 @@ packages:
   - "@typespec/http-client-python"
 ---
 
-[python] Always generate `TypedDict` typing hints for input models in the `types.py` file, and named union aliases in the `_unions.py` file
+[python] Add a `models-mode: typeddict` option that generates `TypedDict` typing hints for input models in the `types.py` file. Also generate named union aliases in the `_unions.py` file (renamed from `_types.py`). `TypedDict` generation is scoped to `models-mode: typeddict`; the default `dpg` mode output is unchanged.

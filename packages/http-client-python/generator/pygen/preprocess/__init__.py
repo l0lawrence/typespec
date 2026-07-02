@@ -373,42 +373,53 @@ class PreProcessPlugin(YamlUpdatePlugin):
             if not (self.is_tsp and has_multi_part_content_type(body_parameter)) and not is_typeddict_only:
                 body_parameter["type"]["types"].append(KNOWN_TYPES["binary"])
 
-            # Add typeddict overload for non-spread dpg models
-            if self.options["models-mode"] == "dpg" and is_dpg_model:
-                cross_lang_id = model_type.get("crossLanguageDefinitionId")
-                existing_td = self._find_existing_typeddict(code_model, cross_lang_id)
-                self._insert_typeddict_overload(code_model, body_parameter, model_type, origin_type, existing_td)
+            # TypedDict overloads are only generated in ``models-mode: typeddict``.
+            # In ``dpg`` mode we keep the historical behavior of accepting either the
+            # generated model or a raw JSON object, so we never emit a ``_types.X``
+            # reference that has no matching definition in ``types.py``.
+            if is_typeddict_only:
+                # A plain model body needs no extra overload: the dpg model already
+                # renders as a TypedDict, so the single body type collapses to it.
+                # For spread bodies (json base), add a typeddict overload that
+                # references the original model, replacing the JSON single-body overload.
+                if is_json_model:
+                    cross_lang_id = model_type.get("crossLanguageDefinitionId")
+                    original = None
+                    if cross_lang_id:
+                        original = next(
+                            (
+                                t
+                                for t in code_model["types"]
+                                if t.get("type") == "model"
+                                and t.get("crossLanguageDefinitionId") == cross_lang_id
+                                and t is not model_type
+                            ),
+                            None,
+                        )
 
-            # For spread bodies (json base), add a typeddict overload that references
-            # the original model. This replaces the JSON single-body overload.
-            if is_json_model:
-                cross_lang_id = model_type.get("crossLanguageDefinitionId")
-                original = None
-                if cross_lang_id:
-                    original = next(
-                        (
-                            t
-                            for t in code_model["types"]
-                            if t.get("type") == "model"
-                            and t.get("crossLanguageDefinitionId") == cross_lang_id
-                            and t is not model_type
-                        ),
-                        None,
-                    )
-
-                if is_typeddict_only and original:
-                    # In typeddict-only mode, the original dpg model already renders
-                    # as a TypedDict — reference it directly, no copy needed.
-                    if origin_type == "model":
-                        body_parameter["type"]["types"].insert(1, original)
+                    if original:
+                        # The original dpg model already renders as a TypedDict —
+                        # reference it directly, no copy needed.
+                        if origin_type == "model":
+                            body_parameter["type"]["types"].insert(1, original)
+                        else:
+                            td_list_or_dict = copy.deepcopy(body_parameter["type"]["types"][0])
+                            td_list_or_dict["elementType"] = original
+                            body_parameter["type"]["types"].insert(1, td_list_or_dict)
                     else:
-                        td_list_or_dict = copy.deepcopy(body_parameter["type"]["types"][0])
-                        td_list_or_dict["elementType"] = original
-                        body_parameter["type"]["types"].insert(1, td_list_or_dict)
+                        existing_td = self._find_existing_typeddict(code_model, cross_lang_id)
+                        self._insert_typeddict_overload(
+                            code_model, body_parameter, model_type, origin_type, existing_td
+                        )
+            elif self.options["models-mode"] == "dpg" and is_dpg_model:
+                if origin_type == "model":
+                    body_parameter["type"]["types"].insert(1, KNOWN_TYPES["any-object"])
                 else:
-                    source = original or model_type
-                    existing_td = self._find_existing_typeddict(code_model, cross_lang_id)
-                    self._insert_typeddict_overload(code_model, body_parameter, source, origin_type, existing_td)
+                    # dict or list
+                    # copy the original dict / list type
+                    any_obj_list_or_dict = copy.deepcopy(body_parameter["type"]["types"][0])
+                    any_obj_list_or_dict["elementType"] = KNOWN_TYPES["any-object"]
+                    body_parameter["type"]["types"].insert(1, any_obj_list_or_dict)
 
             if len(body_parameter["type"]["types"]) == 1:
                 # Only one body variant remains (e.g. typeddict-only mode where the
@@ -419,7 +430,6 @@ class PreProcessPlugin(YamlUpdatePlugin):
                 return
 
             code_model["types"].append(body_parameter["type"])
-
 
     def pad_reserved_words(self, name: str, pad_type: PadType, yaml_type: dict[str, Any]) -> str:
         # we want to pad hidden variables as well

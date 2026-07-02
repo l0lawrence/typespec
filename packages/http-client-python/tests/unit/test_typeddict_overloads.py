@@ -88,7 +88,7 @@ def test_typeddict_only_single_body_emits_no_overload():
 
 
 def test_dpg_mode_still_emits_multiple_overloads():
-    """Regression guard: dpg mode keeps its binary + typeddict overloads."""
+    """Regression guard: dpg mode keeps its binary + JSON overloads."""
     plugin = _plugin("dpg")
     code_model, yaml_data, _ = _json_model_operation()
     body_parameter = yaml_data["bodyParameter"]
@@ -96,7 +96,21 @@ def test_dpg_mode_still_emits_multiple_overloads():
     plugin.add_body_param_type(code_model, body_parameter)
     add_overloads_for_body_param(yaml_data)
 
-    # dpg mode adds at least the binary overload alongside the model, so the
+    # dpg mode adds the binary + raw JSON overloads alongside the model, so the
     # combined type has multiple members and overloads are generated.
     assert body_parameter["type"]["type"] == "combined"
     assert len(yaml_data["overloads"]) >= 2
+
+
+def test_dpg_mode_emits_no_typeddict_reference():
+    """dpg mode must not insert a ``typeddict`` body type (would dangle in types.py)."""
+    plugin = _plugin("dpg")
+    code_model, yaml_data, _ = _json_model_operation()
+    body_parameter = yaml_data["bodyParameter"]
+
+    plugin.add_body_param_type(code_model, body_parameter)
+
+    member_bases = [t.get("base") for t in body_parameter["type"]["types"]]
+    assert "typeddict" not in member_bases
+    # no stray typeddict copy leaked into the shared type list either
+    assert all(t.get("base") != "typeddict" for t in code_model["types"])
